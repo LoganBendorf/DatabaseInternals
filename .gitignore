@@ -1,0 +1,6 @@
+Test
+.vscode
+build
+CMakeFiless
+Makefile
+tsan.suppress

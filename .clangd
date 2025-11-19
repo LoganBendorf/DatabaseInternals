@@ -1,0 +1,105 @@
+
+CompileFlags:
+  CompilationDatabase: build
+  Add: 
+    - "-std=c++23"
+    - "-stdlib=libc++"
+    - "-Wno-writable-strings"
+
+Diagnostics:
+  # Suppress:
+    # - global_module_introducer_not_at_start
+    # - module_decl_not_at_start
+  UnusedIncludes: None
+  ClangTidy:
+    Add: [
+      "readability-*",
+      "performance-*", 
+      "modernize-*",
+      "bugprone-*",
+      "misc-*",
+      "cppcoreguidelines-*"
+    ]
+    # Add: '*'
+    Remove: [
+      "readability-magic-numbers",
+      "readability-identifier-length",
+      "modernize-use-trailing-return-type",
+      "cppcoreguidelines-avoid-magic-numbers",
+      "misc-non-private-member-variables-in-classes",
+
+      "readability-static-accessed-through-instance",
+      "readability-else-after-return",
+      "cppcoreguidelines-special-member-functions",
+      "cppcoreguidelines-no-malloc",
+      "cppcoreguidelines-owning-memory",
+      "readability-simplify-boolean-expr",
+      "modernize-use-auto",
+      "readability-named-parameter",
+      "cppcoreguidelines-pro-bounds-pointer-arithmetic",
+      "cppcoreguidelines-macro-usage",
+      "readability-redundant-access-specifiers",
+      "cppcoreguidelines-avoid-do-while",
+      "misc-no-recursion",
+      "misc-use-anonymous-namespace",
+      "cppcoreguidelines-avoid-non-const-global-variables",
+      "performance-avoid-endl",
+      "readability-function-cognitive-complexity",
+      "performance-unnecessary-value-param", # Maybe useful to check every once in a while
+      "bugprone-easily-swappable-parameters",
+      "bugprone-branch-clone",
+      "readability-function-size", # Maybe useful
+      "modernize-use-designated-initializers",
+      "misc-new-delete-overloads", # Doesn't work
+      "bugprone-crtp-constructor-accessibility",
+      "bugprone-macro-parentheses", # Doesn't work with streams, annoying so disabled
+      # "readability-isolate-declaration", # Broken
+      "readability-use-std-min-max",
+      "cppcoreguidelines-pro-bounds-constant-array-index",
+      "cppcoreguidelines-macro-to-enum",
+      "readability-avoid-const-params-in-decls",
+
+      # From * all
+      "llvmlibc-implementation-in-namespace",
+      "fuchsia-statically-constructed-objects",
+      "llvm-else-after-return",
+      "llvmlibc-callee-namespace",
+      "altera-unroll-loops",
+      "fuchsia-default-arguments-calls",
+      "llvmlibc-inline-function-decl",
+      "llvm-include-order",
+      "cert-err58-cpp",
+      "hicpp-function-size",
+      "google-readability-function-size",
+      "concurrency-mt-unsafe", # Not using threads
+      "fuchsia-overloaded-operator",
+      "google-readability-todo",
+      "hicpp-use-auto",
+      "misc-use-internal-linkage",
+      "fuchsia-virtual-inheritance",
+      "fuchsia-default-arguments-declarations",
+      "cert-dcl54-cpp", # Broken
+      "hicpp-signed-bitwise",
+      "hicpp-new-delete-operators", # Broken
+      "performance-enum-size",
+      "cppcoreguidelines-narrowing-conversions",
+      "cppcoreguidelines-avoid-c-arrays",
+      "cppcoreguidelines-pro-bounds-array-to-pointer-decay",
+      "cppcoreguidelines-pro-type-const-cast",
+      "bugprone-narrowing-conversions",
+      "cppcoreguidelines-interfaces-global-init",
+      "modernize-avoid-c-arrays",
+      "cppcoreguidelines-avoid-const-or-ref-data-members",
+      "cppcoreguidelines-pro-type-reinterpret-cast",
+      "readability-math-missing-parentheses",
+      "readability-make-member-function-const",
+      "readability-use-anyofallof"
+    ]
+    CheckOptions:
+      readability-identifier-naming.VariableCase: camelCase
+      readability-identifier-naming.FunctionCase: camelCase
+      readability-identifier-naming.ClassCase: PascalCase
+      performance-for-range-copy.WarnOnAllAutoCopies: true
+
+Index:
+  Background: Build

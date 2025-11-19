@@ -1,0 +1,426 @@
+#pragma once
+
+#include "helpers.h"
+#include "structs_and_constants.h"
+#include "macros.h"
+#include "PageGuard.h"
+#include "Page.h"
+
+#include <cstddef>
+#include <filesystem>
+#include <iostream>
+#include <memory>
+#include <shared_mutex>
+#include <type_traits>
+#include <concepts>
+#include <unordered_map>
+#include <unordered_set>
+#include <mutex>
+#include <optional>
+
+
+
+class RAII_File {
+    FILE* file;
+    public:
+    explicit RAII_File(FILE* file) : file(file) {}
+    ~RAII_File() noexcept {
+        if (file != nullptr) { fclose(file); }
+    }
+
+    void reassign(FILE* set_file) noexcept{
+        if (file == set_file) { return; }
+        if (file != nullptr) { fclose(file); }
+        file = set_file; 
+    }
+
+    RAII_File& operator=(FILE* set_file) noexcept { 
+        if (file == set_file) { return *this; }
+        if (file != nullptr) { fclose(file); }
+        file = set_file; 
+        return *this;
+    }
+
+    bool operator==(const void*& ptr) const noexcept {
+        return file == ptr;
+    }
+    // Implicit conversion
+    operator FILE*() const noexcept { return file; }
+
+    // Delete copy operations
+    RAII_File(const RAII_File&) = delete;
+    RAII_File& operator=(const RAII_File&) = delete;
+
+    // Move constructor
+    RAII_File(RAII_File&& other) noexcept : file(other.file) {
+        other.file = nullptr;  // Transfer ownership
+    }
+
+    // Move assignment operator
+    RAII_File& operator=(RAII_File&& other) noexcept {
+        if (this == &other) { return *this; }
+        
+        if (file != nullptr) { fclose(file); }
+    
+        file = other.file;
+        other.file = nullptr;
+        
+        return *this;
+    }
+};
+
+
+
+template<typename T>
+concept CharAllocator = requires {
+    typename T::value_type;
+    requires std::same_as<typename T::value_type, char>;
+    requires std::is_same_v<T, std::allocator<char>> || 
+             requires(T& alloc, std::size_t n) {
+                 { alloc.allocate(n) } -> std::convertible_to<char*>;
+                 { alloc.deallocate(std::declval<char*>(), n) } -> std::same_as<void>;
+             };
+};
+
+template <CharAllocator alloc_t = std::allocator<char>>    
+class BufferPool {
+
+    enum AccessType { READ, WRITE };
+
+    alloc_t allocator_{}; 
+    using Traits = std::allocator_traits<alloc_t>;
+
+    using frame_id_t = int;
+
+    // Rebind allocators for each map's value type
+    using FrameIDAllocator             = typename Traits::template rebind_alloc<frame_id_t>;
+    using IntAllocator                 = typename Traits::template rebind_alloc<int>;
+    using BoolAllocator                = typename Traits::template rebind_alloc<bool>;
+    using shared_mutexAllocator        = typename Traits::template rebind_alloc<std::shared_mutex>;
+    using condition_variable_Allocator = typename Traits::template rebind_alloc<std::condition_variable>;
+    using frame_accesses_Allocator     = typename Traits::template rebind_alloc<std::pair<const frame_id_t, unsigned>>;
+    using page_to_frame_map_Allocator  = typename Traits::template rebind_alloc<std::pair<const frame_id_t, page_id_t>>;
+    using frame_to_page_map_Allocator  = typename Traits::template rebind_alloc<std::pair<const page_id_t, frame_id_t>>;
+
+
+    const std::filesystem::path file_path;
+    char* memory;
+    const size_t page_size;
+    const size_t page_count;
+
+    std::unordered_set<frame_id_t, std::hash<frame_id_t>, std::equal_to<frame_id_t>, FrameIDAllocator> free_frames;
+    std::unordered_map<frame_id_t, unsigned int, std::hash<unsigned int>, std::equal_to<unsigned int>, frame_accesses_Allocator> frame_accesses; // Todo: Decrement when removing page
+    std::unordered_map<frame_id_t, page_id_t, std::hash<frame_id_t>, std::equal_to<frame_id_t>, page_to_frame_map_Allocator> frame_to_page_map;
+    std::unordered_map<page_id_t, frame_id_t, std::hash<page_id_t>, std::equal_to<page_id_t>, frame_to_page_map_Allocator> page_to_frame_map;
+    public:
+    std::mutex mu;
+    private:
+
+
+    void sanity_check(std::unique_lock<std::mutex>& bp_lock) {
+        STACK_TRACE_ASSERT(bp_lock.owns_lock());
+        std::unordered_set<page_id_t> unique_pages;
+        for (const auto& p : frame_to_page_map) {
+            const page_id_t pid = p.second;
+            if (unique_pages.contains(pid)) {
+                FATAL_ERROR_STACK_TRACE_EXIT_CUR_LOC("BP.frame_to_page_map contained multiple page to frame mappings. Supposed to be unique. i.e. 1 page -> 1 frame. Found n pages -> 1 frame");
+            }
+            unique_pages.emplace(pid);
+        }
+    }
+
+    static constexpr unsigned int k = 2;
+
+    class FrameLock {
+        BufferPool& bp;
+        std::vector<std::shared_mutex, shared_mutexAllocator> frame_mu;        // Frame -> Read mutex
+        std::vector<std::atomic<int>> write_requests; // So the retard doesn't free an inuse frame AND so lock doesn't block
+        std::vector<std::atomic<int>> read_requests; // So the retard doesn't free an inuse frame AND so lock doesn't block
+
+        public:
+        explicit FrameLock(BufferPool& bp) : bp(bp), frame_mu(bp.page_count), write_requests(bp.page_count), read_requests(bp.page_count) {}
+
+        // When function exists, bp_lock will be held
+        void write_lock_frame(const frame_id_t frame, std::unique_lock<std::mutex>& bp_lock) {
+            STACK_TRACE_ASSERT(bp_lock.owns_lock());
+            write_requests[frame].fetch_add(1);
+            bp_lock.unlock();
+            frame_mu[frame].lock();
+            bp_lock.lock();
+            write_requests[frame].fetch_sub(1);
+        }
+
+        // When function exists, bp_lock will be held
+        void read_lock_frame(const frame_id_t frame, std::unique_lock<std::mutex>& bp_lock) {
+            STACK_TRACE_ASSERT(bp_lock.owns_lock());
+            read_requests[frame].fetch_add(1);
+            bp_lock.unlock();
+            frame_mu[frame].lock_shared();
+            bp_lock.lock();
+            read_requests[frame].fetch_sub(1);
+        }
+
+        void lock_frame(const frame_id_t frame, const AccessType access_type, std::unique_lock<std::mutex>& bp_lock) {
+            switch (access_type) {
+                case READ:  read_lock_frame(frame, bp_lock);  break;
+                case WRITE: write_lock_frame(frame, bp_lock); break;
+            }  
+        }
+
+        void write_unlock_frame(const frame_id_t frame) {
+            frame_mu[frame].unlock();
+        }
+
+        void read_unlock_frame(const frame_id_t frame) {
+            frame_mu[frame].unlock_shared();
+        }
+
+        void unlock_frame(const frame_id_t frame, const AccessType access_type) {
+            switch (access_type) {
+                case READ:  read_unlock_frame(frame);  break;
+                case WRITE: write_unlock_frame(frame); break;
+            }  
+        }
+
+        [[nodiscard]] auto is_locked(const frame_id_t frame) -> bool {
+            if (write_requests[frame].load() != 0 || read_requests[frame].load() != 0) {
+                return true;
+            }
+
+            if (frame_mu[frame].try_lock()) {
+                frame_mu[frame].unlock();
+                return false;
+            } else {
+                return true;
+            }
+        }
+    };
+    FrameLock frame_lock;
+
+
+    public:
+    explicit BufferPool(const std::filesystem::path file_path, const size_t page_size, const size_t page_count) 
+        : file_path(file_path), memory(Traits::allocate(allocator_, page_size * page_count)), page_size(page_size), page_count(page_count), frame_lock(*this),
+        free_frames(page_count), frame_accesses(page_count), page_to_frame_map(), frame_to_page_map(page_count) 
+        {
+            for (size_t i = 0; i < page_count; i++) {
+                free_frames.emplace(i);
+                frame_accesses.insert_or_assign(i, 0);
+            }
+        }
+
+    ~BufferPool() {
+        if (memory != nullptr) {
+            std::allocator_traits<alloc_t>::deallocate(allocator_, memory, page_size * page_count);
+        }
+    }
+
+    BufferPool(const BufferPool&) = delete;            // delete copy ctor
+    BufferPool& operator=(const BufferPool&) = delete; // delete copy assignment
+    BufferPool(BufferPool&&) = delete;                 // delete move ctor
+    BufferPool& operator=(BufferPool&&) = delete;      // delete move assignment
+
+    public:
+
+    auto disk_write(const Page page, std::unique_lock<std::mutex>& bp_lock) -> bool { // Lock must be held
+        STACK_TRACE_ASSERT(bp_lock.owns_lock());
+
+        RAII_File file = RAII_File{fopen(file_path.c_str(), "rb+")};
+        if (file == nullptr) { return false; }
+        
+        const unsigned int file_offset = page.pid * page_size;
+        if (fseek(file, file_offset, SEEK_SET) != 0) {
+            perror("fseek failed");
+            return false;
+        }
+
+        const size_t n = fwrite(page.data, page.page_size, 1, file);
+        STACK_TRACE_EXPECT(1, n);
+        
+        return true;
+    }
+
+    void increment_frame_accesses(const frame_id_t fid) { // Lock must be held.
+        auto it = frame_accesses.find(fid);
+        if (it == frame_accesses.end()) {
+            FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("All frames should have a play in the frame access map"); }
+        const unsigned int cur = it->second;
+        frame_accesses.insert_or_assign(fid, (cur + 1) % k);
+    }
+
+    [[nodiscard]] auto evict(std::unique_lock<std::mutex>& bp_lock) -> bool {
+        STACK_TRACE_ASSERT(bp_lock.owns_lock());
+
+        // K, frame
+        std::priority_queue<std::pair<int, frame_id_t>, std::vector<std::pair<int, frame_id_t>>, std::greater<>> q; // Sorts ascending [1, 2, 3...]
+
+        for (auto& p : frame_accesses) { // Loop over frames instead maybe?
+            const frame_id_t frame = p.first;
+            const int k = p.second;
+            if (frame_lock.is_locked(frame)) { continue; }
+            q.emplace(k, frame);
+        }
+        
+        if (!q.empty()) {
+            const auto p = q.top();
+            const frame_id_t frame = p.second;
+            
+            // Remove BP state
+            free_frames.emplace(frame);
+            const page_id_t cur_pid = frame_to_page_map[frame];
+            // std::cout << "Evicting pid (" << cur_pid << ", frame (" << frame << ")" << std::endl;
+            page_to_frame_map.erase(cur_pid);
+            frame_to_page_map.erase(frame);
+            frame_accesses.insert_or_assign(frame, 0);
+            return true;
+        } else {
+            return false;
+        }
+    }
+
+    void deallocate_page(const page_id_t pid, const AccessType access_type, std::unique_lock<std::mutex>& lock) {
+        STACK_TRACE_ASSERT(lock.owns_lock());
+        std::cout << "Deallocating pid (" << pid << ", access type (" << (access_type == WRITE ? "WRITE" : "READ") << ")" << std::endl;
+
+        auto frame_it = page_to_frame_map.find(pid);
+        if (frame_it == page_to_frame_map.end()) {
+            FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("Tried to deallocate page with no associated frame"); }
+        const frame_id_t frame = frame_it->second;
+        lock.unlock();
+        
+        frame_lock.unlock_frame(frame, access_type);
+        std::cout << "Successfully deallocated pid (" << pid << ", access type (" << (access_type == WRITE ? "WRITE" : "READ") << ")" << std::endl;
+    }
+
+    [[nodiscard]] auto disk_read(const page_id_t pid, const frame_id_t frame, std::unique_lock<std::mutex>& lock) -> bool { // Must be called with lock held
+        STACK_TRACE_ASSERT(lock.owns_lock());
+
+        RAII_File file{fopen(file_path.c_str(), "rb+")};
+        if (file == nullptr) {
+            // File doesn't exist, create it
+            file.reassign(fopen(file_path.c_str(), "wb+"));
+            if (file == nullptr) {
+                perror("fopen");
+                return false;
+            }
+        }
+
+        // Move to offset
+        const int file_offset = pid * page_size;
+        if (fseek(file, file_offset, SEEK_SET) != 0) {
+            perror("fseek failed");
+            return false;
+        }
+
+        const int bp_memory_offset = frame * page_size;
+        char* bp_memory_location = memory + bp_memory_offset;
+        
+        const size_t bytes_read = fread(bp_memory_location, 1, page_size, file);
+        // std::cout << "Read " << bytes_read << " bytes: " << std::string(bp_memory_location, bytes_read) << "\n";
+        if (ferror(file) != 0) {
+            perror("fread");
+            return false;
+        }
+
+        return true;
+    }
+
+    // So all pages map to the same frame, so different threads don't alloc the same pid to a thousand different frames
+    using frame_requests_set_Allocator  = typename Traits::template rebind_alloc<page_id_t>;
+    std::unordered_set<page_id_t, std::hash<page_id_t>, std::equal_to<page_id_t>, frame_requests_set_Allocator> frame_requests;
+
+    [[nodiscard]] auto get_frame(const page_id_t pid, AccessType access_type, std::unique_lock<std::mutex>& bp_lock) -> std::optional<frame_id_t> {
+        STACK_TRACE_ASSERT(bp_lock.owns_lock());
+
+        START:
+
+        auto frame_it = page_to_frame_map.find(pid);
+        // In memory
+        if (frame_it != page_to_frame_map.end()) {
+            const frame_id_t frame = frame_it->second;
+            frame_lock.lock_frame(frame, access_type, bp_lock);
+
+            STACK_TRACE_ASSERT(page_to_frame_map.find(pid)!= page_to_frame_map.end());
+            return frame;
+        }
+        
+        // Not in memory, make request
+
+        // Someone already made the request
+        if (frame_requests.contains(pid) ) {
+
+            bp_lock.unlock();
+            while (true) {
+                bp_lock.lock();
+                if (!frame_requests.contains(pid)) { break; }
+                bp_lock.unlock();
+                std::this_thread::yield();
+            }
+            STACK_TRACE_ASSERT(bp_lock.owns_lock());
+            goto START;
+        } else { // Make the request
+            
+            if (free_frames.empty()) { // Evict if full
+                const bool ok = evict(bp_lock);
+                if (!ok) { return std::nullopt; }
+            }
+            STACK_TRACE_ASSERT(!free_frames.empty());
+            
+            const frame_id_t frame = *free_frames.begin();
+            free_frames.erase(frame);
+
+            // Lock
+            frame_requests.emplace(pid);
+            frame_lock.lock_frame(frame, access_type, bp_lock); // Only time bp_lock unlocks
+            STACK_TRACE_ASSERT(bp_lock.owns_lock());
+
+            // Disk read
+            const bool ok = disk_read(pid, frame, bp_lock);
+            if (!ok) { std::cerr << "\nREAD FAIL\n"; exit(1); frame_requests.erase(pid); return std::nullopt; }
+            // Add state to BP
+            page_to_frame_map.emplace(pid, frame);
+            frame_to_page_map.emplace(frame, pid);
+            frame_requests.erase(pid);
+            return frame;
+        }
+    }
+
+    void write_unlock(Page page) noexcept { // Always assumes dirty
+        std::unique_lock<std::mutex> lock(mu);
+        disk_write(page, lock);
+        deallocate_page(page.pid, WRITE, lock);
+    }
+
+    void read_unlock(Page page) noexcept {
+        std::unique_lock<std::mutex> lock(mu);
+        deallocate_page(page.pid, READ, lock);
+    }
+
+    [[nodiscard]] auto get_write_page_guard(const page_id_t pid) -> std::optional<WritePageGuard> {
+        std::unique_lock bp_lock(mu);
+
+        auto frame_opt = get_frame(pid, WRITE, bp_lock);
+        if (!frame_opt.has_value()) { return std::nullopt; }
+        const frame_id_t frame = frame_opt.value();
+
+        increment_frame_accesses(frame);
+
+        Page page{memory + page_size * frame, page_size, pid};
+        sanity_check(bp_lock);
+        return WritePageGuard{ [this](Page p) { this->write_unlock(p); }, page};
+    }
+
+    [[nodiscard]] auto get_read_page_guard(const page_id_t pid) -> std::optional<ReadPageGuard> {
+        std::unique_lock bp_lock(mu);
+
+        auto frame_opt = get_frame(pid, READ, bp_lock);
+        if (!frame_opt.has_value()) { return std::nullopt; }
+        const frame_id_t frame = frame_opt.value();
+
+        increment_frame_accesses(frame);
+
+        Page page{memory + page_size * frame, page_size, pid};
+        sanity_check(bp_lock);
+        return ReadPageGuard{ [this](Page p) { this->read_unlock(p); }, page};
+    }
+};
