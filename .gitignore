@@ -4,3 +4,7 @@ build
 CMakeFiless
 Makefile
 tsan.suppress
+.clangd
+.gitignore
+coz
+perf.data

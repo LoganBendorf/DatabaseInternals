@@ -50,6 +50,7 @@ void read_func(BufferPool<std::allocator<char>>& bp, std::atomic<int>& reader_co
             auto opt = bp.get_read_page_guard(pid);
             if (opt.has_value()) {
                 rpg = std::move(opt.value());
+                std::cout << "Thread (" << std::this_thread::get_id() << ") acquired  read  guard for pid (" << pid << ")\n";
                 break; 
             }
         } catch (std::exception& e) {
@@ -58,6 +59,7 @@ void read_func(BufferPool<std::allocator<char>>& bp, std::atomic<int>& reader_co
         // FATAL_ERROR_STACK_TRACE_EXIT_CUR_LOC("No looping allowed for now");
     }
     auto read_msg = rpg.read();
+    std::cout << "Thread (" << std::this_thread::get_id() << ") releasing read  guard for pid (" << pid << ")\n";
     reader_count.fetch_sub(1);
 };
 
@@ -72,6 +74,7 @@ void write_func(BufferPool<std::allocator<char>>& bp, std::atomic<int>& writer_c
             auto opt = bp.get_write_page_guard(pid);
             if (opt.has_value()) {
                 wpg = std::move(opt.value());
+                std::cout << "Thread (" << std::this_thread::get_id() << ") acquired  write guard for pid (" << pid << ")\n";
                 break; 
             }
         } catch (std::exception& e) {
@@ -89,12 +92,10 @@ void write_func(BufferPool<std::allocator<char>>& bp, std::atomic<int>& writer_c
     }
     std::string_view read_msg = wpg.read();
     STACK_TRACE_ASSERT(read_msg[0] == std::string(1, msg)[0]);
+    std::cout << "Thread (" << std::this_thread::get_id() << ") releasing write guard for pid (" << pid << ")\n";
     writer_count.fetch_sub(1);
 };
 
-// I believe the issue isn't until evictions start happening, but because of timing, evictions don't start occuring until ~20 threads.
-//   Right now it kinda makes it hard to debug with soo many threads. So create thread pool so thread creation overhead is gone.
-//   Then we could probably have page_count = 2; num_jobs = 2 or num_jobs - 3;
 void thread_test() {
     constexpr int page_size  = 11;
     constexpr int page_count = 2;
@@ -106,29 +107,31 @@ void thread_test() {
     std::uniform_int_distribution<int> op_dst(0, 1); // range
     std::uniform_int_distribution<unsigned int> offset_dst(0, 100); // range
     std::uniform_int_distribution<unsigned int> timer_dst(0, 100); // range
+    std::uniform_int_distribution<unsigned int> page_dst(0, 10); // range
 
     page_id_t pid = 0;
     constexpr int num_ops = 50;
-    ThreadPool pool{30};
-    std::atomic<int> reader_count = 0;
-    std::atomic<int> writer_count = 0;
-    for (int i = 0; i < 120; i++) {
+    ThreadPool pool{15};
+    static std::atomic<int> reader_count = 0;
+    static std::atomic<int> writer_count = 0;
+    for (int i = 0; i < 30; i++) {
         const int op = op_dst(gen);
         switch (op) {
             case 0: { // Write
                 const unsigned int wait = timer_dst(gen);
 
-                if (op_dst(gen) == 0) { pid++; }
-                pid++;
-                // if (op_dst(gen) == 0) { pid = (pid + 1) % 2; }
+                // if (op_dst(gen) == 0) { pid++; }
+                // pid++;
+                pid = page_dst(gen);
 
                 pool.give_work(write_func, std::ref(bp),  std::ref(writer_count), wait, pid);
             } break; 
             case 1: { // Read
                 const unsigned int wait = timer_dst(gen);                
-                if (op_dst(gen) == 0) { pid++; }
-                pid++;
-                // if (op_dst(gen) == 0) { pid = (pid + 1) % 2; }
+                // if (op_dst(gen) == 0) { pid++; }
+                // pid++;
+                pid = page_dst(gen);
+
 
                 pool.give_work(read_func, std::ref(bp), std::ref(reader_count), wait, pid);
             } break;
@@ -144,49 +147,12 @@ void thread_test() {
     bp.mu.unlock();
 }
 
-void sequential_test() {
-    constexpr int page_size  = 11;
-    constexpr int page_count = 12;
-    const auto* const fp = "./Test/sequential.test";
-    BufferPool bp(fp, page_size, page_count);
-    std::random_device rd; // seed
-    std::mt19937 gen(rd());
-    std::uniform_int_distribution<int> op_dst(0, 1); // range
-    int pid = 0;
-    std::vector<WritePageGuard> wpgs;
-    std::vector<ReadPageGuard> rpgs;
-    for (int i = 0; i < 20; i++) {
-        if ((i % 2) == 0) { 
-            auto opt = bp.get_write_page_guard(pid);
-            if (!opt.has_value()) { continue; }
-            wpgs.emplace_back(std::move(opt.value()));            
-        } else {
-            auto opt = bp.get_read_page_guard(pid);
-            if (!opt.has_value()) { continue; }
-            rpgs.emplace_back(std::move(opt.value()));  
-        }
-    }
-
-    // const int write_p1 = wpgs.size() / 2;
-    // const int write_p2 = wpgs.size() - write_p1;
-    // const int read_p1  = rpgs.size() / 2;
-    // const int read_p2  = rpgs.size() - read_p1;
-    // for (int i = 0; i < write_p1; i++) {
-    //     wpgs[i].release(); }
-    // for (int i = 0; i < read_p1; i++) {
-    //     rpgs[i].release(); }
-    // for (int i = write_p1; i < write_p2; i++) {
-    //     wpgs[i].release(); }
-    // for (int i = read_p1; i < read_p2; i++) {
-    //     wpgs[i].release(); }
-
-}
 
 void disk_test() {
     // basic_test();
     // write_correctness_test();
-    int loop_count = 0;
-    while (true) {
+    
+    for (int i = 0; i < 1000; i++) {
         // std::cout << "Loop count: " << loop_count++ << "\n";
         // sequential_test();
         thread_test();

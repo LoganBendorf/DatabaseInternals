@@ -69,95 +69,125 @@ include CMakeFiles/main.dir/progress.make
 # Include the compile flags for this target's objects.
 include CMakeFiles/main.dir/flags.make
 
+CMakeFiles/main.dir/BPTreeTest.cpp.o: CMakeFiles/main.dir/flags.make
+CMakeFiles/main.dir/BPTreeTest.cpp.o: BPTreeTest.cpp
+CMakeFiles/main.dir/BPTreeTest.cpp.o: CMakeFiles/main.dir/compiler_depend.ts
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/logan/CodeProjects/Database_Internals/CMakeFiles --progress-num=$(CMAKE_PROGRESS_1) "Building CXX object CMakeFiles/main.dir/BPTreeTest.cpp.o"
+	/usr/bin/clang++-20 $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/main.dir/BPTreeTest.cpp.o -MF CMakeFiles/main.dir/BPTreeTest.cpp.o.d -o CMakeFiles/main.dir/BPTreeTest.cpp.o -c /home/logan/CodeProjects/Database_Internals/BPTreeTest.cpp
+
+CMakeFiles/main.dir/BPTreeTest.cpp.i: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing CXX source to CMakeFiles/main.dir/BPTreeTest.cpp.i"
+	/usr/bin/clang++-20 $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/logan/CodeProjects/Database_Internals/BPTreeTest.cpp > CMakeFiles/main.dir/BPTreeTest.cpp.i
+
+CMakeFiles/main.dir/BPTreeTest.cpp.s: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling CXX source to assembly CMakeFiles/main.dir/BPTreeTest.cpp.s"
+	/usr/bin/clang++-20 $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/logan/CodeProjects/Database_Internals/BPTreeTest.cpp -o CMakeFiles/main.dir/BPTreeTest.cpp.s
+
 CMakeFiles/main.dir/Bp-Tree/bptree.cpp.o: CMakeFiles/main.dir/flags.make
 CMakeFiles/main.dir/Bp-Tree/bptree.cpp.o: Bp-Tree/bptree.cpp
 CMakeFiles/main.dir/Bp-Tree/bptree.cpp.o: CMakeFiles/main.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/logan/CodeProjects/Database_Internals/CMakeFiles --progress-num=$(CMAKE_PROGRESS_1) "Building CXX object CMakeFiles/main.dir/Bp-Tree/bptree.cpp.o"
-	/usr/bin/clang++-19 $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/main.dir/Bp-Tree/bptree.cpp.o -MF CMakeFiles/main.dir/Bp-Tree/bptree.cpp.o.d -o CMakeFiles/main.dir/Bp-Tree/bptree.cpp.o -c /home/logan/CodeProjects/Database_Internals/Bp-Tree/bptree.cpp
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/logan/CodeProjects/Database_Internals/CMakeFiles --progress-num=$(CMAKE_PROGRESS_2) "Building CXX object CMakeFiles/main.dir/Bp-Tree/bptree.cpp.o"
+	/usr/bin/clang++-20 $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/main.dir/Bp-Tree/bptree.cpp.o -MF CMakeFiles/main.dir/Bp-Tree/bptree.cpp.o.d -o CMakeFiles/main.dir/Bp-Tree/bptree.cpp.o -c /home/logan/CodeProjects/Database_Internals/Bp-Tree/bptree.cpp
 
 CMakeFiles/main.dir/Bp-Tree/bptree.cpp.i: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing CXX source to CMakeFiles/main.dir/Bp-Tree/bptree.cpp.i"
-	/usr/bin/clang++-19 $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/logan/CodeProjects/Database_Internals/Bp-Tree/bptree.cpp > CMakeFiles/main.dir/Bp-Tree/bptree.cpp.i
+	/usr/bin/clang++-20 $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/logan/CodeProjects/Database_Internals/Bp-Tree/bptree.cpp > CMakeFiles/main.dir/Bp-Tree/bptree.cpp.i
 
 CMakeFiles/main.dir/Bp-Tree/bptree.cpp.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling CXX source to assembly CMakeFiles/main.dir/Bp-Tree/bptree.cpp.s"
-	/usr/bin/clang++-19 $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/logan/CodeProjects/Database_Internals/Bp-Tree/bptree.cpp -o CMakeFiles/main.dir/Bp-Tree/bptree.cpp.s
+	/usr/bin/clang++-20 $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/logan/CodeProjects/Database_Internals/Bp-Tree/bptree.cpp -o CMakeFiles/main.dir/Bp-Tree/bptree.cpp.s
 
 CMakeFiles/main.dir/Disk/PageGuard.cpp.o: CMakeFiles/main.dir/flags.make
 CMakeFiles/main.dir/Disk/PageGuard.cpp.o: Disk/PageGuard.cpp
 CMakeFiles/main.dir/Disk/PageGuard.cpp.o: CMakeFiles/main.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/logan/CodeProjects/Database_Internals/CMakeFiles --progress-num=$(CMAKE_PROGRESS_2) "Building CXX object CMakeFiles/main.dir/Disk/PageGuard.cpp.o"
-	/usr/bin/clang++-19 $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/main.dir/Disk/PageGuard.cpp.o -MF CMakeFiles/main.dir/Disk/PageGuard.cpp.o.d -o CMakeFiles/main.dir/Disk/PageGuard.cpp.o -c /home/logan/CodeProjects/Database_Internals/Disk/PageGuard.cpp
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/logan/CodeProjects/Database_Internals/CMakeFiles --progress-num=$(CMAKE_PROGRESS_3) "Building CXX object CMakeFiles/main.dir/Disk/PageGuard.cpp.o"
+	/usr/bin/clang++-20 $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/main.dir/Disk/PageGuard.cpp.o -MF CMakeFiles/main.dir/Disk/PageGuard.cpp.o.d -o CMakeFiles/main.dir/Disk/PageGuard.cpp.o -c /home/logan/CodeProjects/Database_Internals/Disk/PageGuard.cpp
 
 CMakeFiles/main.dir/Disk/PageGuard.cpp.i: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing CXX source to CMakeFiles/main.dir/Disk/PageGuard.cpp.i"
-	/usr/bin/clang++-19 $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/logan/CodeProjects/Database_Internals/Disk/PageGuard.cpp > CMakeFiles/main.dir/Disk/PageGuard.cpp.i
+	/usr/bin/clang++-20 $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/logan/CodeProjects/Database_Internals/Disk/PageGuard.cpp > CMakeFiles/main.dir/Disk/PageGuard.cpp.i
 
 CMakeFiles/main.dir/Disk/PageGuard.cpp.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling CXX source to assembly CMakeFiles/main.dir/Disk/PageGuard.cpp.s"
-	/usr/bin/clang++-19 $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/logan/CodeProjects/Database_Internals/Disk/PageGuard.cpp -o CMakeFiles/main.dir/Disk/PageGuard.cpp.s
+	/usr/bin/clang++-20 $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/logan/CodeProjects/Database_Internals/Disk/PageGuard.cpp -o CMakeFiles/main.dir/Disk/PageGuard.cpp.s
 
 CMakeFiles/main.dir/DiskTest.cpp.o: CMakeFiles/main.dir/flags.make
 CMakeFiles/main.dir/DiskTest.cpp.o: DiskTest.cpp
 CMakeFiles/main.dir/DiskTest.cpp.o: CMakeFiles/main.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/logan/CodeProjects/Database_Internals/CMakeFiles --progress-num=$(CMAKE_PROGRESS_3) "Building CXX object CMakeFiles/main.dir/DiskTest.cpp.o"
-	/usr/bin/clang++-19 $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/main.dir/DiskTest.cpp.o -MF CMakeFiles/main.dir/DiskTest.cpp.o.d -o CMakeFiles/main.dir/DiskTest.cpp.o -c /home/logan/CodeProjects/Database_Internals/DiskTest.cpp
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/logan/CodeProjects/Database_Internals/CMakeFiles --progress-num=$(CMAKE_PROGRESS_4) "Building CXX object CMakeFiles/main.dir/DiskTest.cpp.o"
+	/usr/bin/clang++-20 $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/main.dir/DiskTest.cpp.o -MF CMakeFiles/main.dir/DiskTest.cpp.o.d -o CMakeFiles/main.dir/DiskTest.cpp.o -c /home/logan/CodeProjects/Database_Internals/DiskTest.cpp
 
 CMakeFiles/main.dir/DiskTest.cpp.i: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing CXX source to CMakeFiles/main.dir/DiskTest.cpp.i"
-	/usr/bin/clang++-19 $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/logan/CodeProjects/Database_Internals/DiskTest.cpp > CMakeFiles/main.dir/DiskTest.cpp.i
+	/usr/bin/clang++-20 $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/logan/CodeProjects/Database_Internals/DiskTest.cpp > CMakeFiles/main.dir/DiskTest.cpp.i
 
 CMakeFiles/main.dir/DiskTest.cpp.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling CXX source to assembly CMakeFiles/main.dir/DiskTest.cpp.s"
-	/usr/bin/clang++-19 $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/logan/CodeProjects/Database_Internals/DiskTest.cpp -o CMakeFiles/main.dir/DiskTest.cpp.s
+	/usr/bin/clang++-20 $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/logan/CodeProjects/Database_Internals/DiskTest.cpp -o CMakeFiles/main.dir/DiskTest.cpp.s
+
+CMakeFiles/main.dir/ThreadPoolTest.cpp.o: CMakeFiles/main.dir/flags.make
+CMakeFiles/main.dir/ThreadPoolTest.cpp.o: ThreadPoolTest.cpp
+CMakeFiles/main.dir/ThreadPoolTest.cpp.o: CMakeFiles/main.dir/compiler_depend.ts
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/logan/CodeProjects/Database_Internals/CMakeFiles --progress-num=$(CMAKE_PROGRESS_5) "Building CXX object CMakeFiles/main.dir/ThreadPoolTest.cpp.o"
+	/usr/bin/clang++-20 $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/main.dir/ThreadPoolTest.cpp.o -MF CMakeFiles/main.dir/ThreadPoolTest.cpp.o.d -o CMakeFiles/main.dir/ThreadPoolTest.cpp.o -c /home/logan/CodeProjects/Database_Internals/ThreadPoolTest.cpp
+
+CMakeFiles/main.dir/ThreadPoolTest.cpp.i: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing CXX source to CMakeFiles/main.dir/ThreadPoolTest.cpp.i"
+	/usr/bin/clang++-20 $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/logan/CodeProjects/Database_Internals/ThreadPoolTest.cpp > CMakeFiles/main.dir/ThreadPoolTest.cpp.i
+
+CMakeFiles/main.dir/ThreadPoolTest.cpp.s: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling CXX source to assembly CMakeFiles/main.dir/ThreadPoolTest.cpp.s"
+	/usr/bin/clang++-20 $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/logan/CodeProjects/Database_Internals/ThreadPoolTest.cpp -o CMakeFiles/main.dir/ThreadPoolTest.cpp.s
 
 CMakeFiles/main.dir/helpers.cpp.o: CMakeFiles/main.dir/flags.make
 CMakeFiles/main.dir/helpers.cpp.o: helpers.cpp
 CMakeFiles/main.dir/helpers.cpp.o: CMakeFiles/main.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/logan/CodeProjects/Database_Internals/CMakeFiles --progress-num=$(CMAKE_PROGRESS_4) "Building CXX object CMakeFiles/main.dir/helpers.cpp.o"
-	/usr/bin/clang++-19 $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/main.dir/helpers.cpp.o -MF CMakeFiles/main.dir/helpers.cpp.o.d -o CMakeFiles/main.dir/helpers.cpp.o -c /home/logan/CodeProjects/Database_Internals/helpers.cpp
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/logan/CodeProjects/Database_Internals/CMakeFiles --progress-num=$(CMAKE_PROGRESS_6) "Building CXX object CMakeFiles/main.dir/helpers.cpp.o"
+	/usr/bin/clang++-20 $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/main.dir/helpers.cpp.o -MF CMakeFiles/main.dir/helpers.cpp.o.d -o CMakeFiles/main.dir/helpers.cpp.o -c /home/logan/CodeProjects/Database_Internals/helpers.cpp
 
 CMakeFiles/main.dir/helpers.cpp.i: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing CXX source to CMakeFiles/main.dir/helpers.cpp.i"
-	/usr/bin/clang++-19 $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/logan/CodeProjects/Database_Internals/helpers.cpp > CMakeFiles/main.dir/helpers.cpp.i
+	/usr/bin/clang++-20 $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/logan/CodeProjects/Database_Internals/helpers.cpp > CMakeFiles/main.dir/helpers.cpp.i
 
 CMakeFiles/main.dir/helpers.cpp.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling CXX source to assembly CMakeFiles/main.dir/helpers.cpp.s"
-	/usr/bin/clang++-19 $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/logan/CodeProjects/Database_Internals/helpers.cpp -o CMakeFiles/main.dir/helpers.cpp.s
+	/usr/bin/clang++-20 $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/logan/CodeProjects/Database_Internals/helpers.cpp -o CMakeFiles/main.dir/helpers.cpp.s
 
 CMakeFiles/main.dir/macros.cpp.o: CMakeFiles/main.dir/flags.make
 CMakeFiles/main.dir/macros.cpp.o: macros.cpp
 CMakeFiles/main.dir/macros.cpp.o: CMakeFiles/main.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/logan/CodeProjects/Database_Internals/CMakeFiles --progress-num=$(CMAKE_PROGRESS_5) "Building CXX object CMakeFiles/main.dir/macros.cpp.o"
-	/usr/bin/clang++-19 $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/main.dir/macros.cpp.o -MF CMakeFiles/main.dir/macros.cpp.o.d -o CMakeFiles/main.dir/macros.cpp.o -c /home/logan/CodeProjects/Database_Internals/macros.cpp
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/logan/CodeProjects/Database_Internals/CMakeFiles --progress-num=$(CMAKE_PROGRESS_7) "Building CXX object CMakeFiles/main.dir/macros.cpp.o"
+	/usr/bin/clang++-20 $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/main.dir/macros.cpp.o -MF CMakeFiles/main.dir/macros.cpp.o.d -o CMakeFiles/main.dir/macros.cpp.o -c /home/logan/CodeProjects/Database_Internals/macros.cpp
 
 CMakeFiles/main.dir/macros.cpp.i: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing CXX source to CMakeFiles/main.dir/macros.cpp.i"
-	/usr/bin/clang++-19 $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/logan/CodeProjects/Database_Internals/macros.cpp > CMakeFiles/main.dir/macros.cpp.i
+	/usr/bin/clang++-20 $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/logan/CodeProjects/Database_Internals/macros.cpp > CMakeFiles/main.dir/macros.cpp.i
 
 CMakeFiles/main.dir/macros.cpp.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling CXX source to assembly CMakeFiles/main.dir/macros.cpp.s"
-	/usr/bin/clang++-19 $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/logan/CodeProjects/Database_Internals/macros.cpp -o CMakeFiles/main.dir/macros.cpp.s
+	/usr/bin/clang++-20 $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/logan/CodeProjects/Database_Internals/macros.cpp -o CMakeFiles/main.dir/macros.cpp.s
 
 CMakeFiles/main.dir/main.cpp.o: CMakeFiles/main.dir/flags.make
 CMakeFiles/main.dir/main.cpp.o: main.cpp
 CMakeFiles/main.dir/main.cpp.o: CMakeFiles/main.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/logan/CodeProjects/Database_Internals/CMakeFiles --progress-num=$(CMAKE_PROGRESS_6) "Building CXX object CMakeFiles/main.dir/main.cpp.o"
-	/usr/bin/clang++-19 $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/main.dir/main.cpp.o -MF CMakeFiles/main.dir/main.cpp.o.d -o CMakeFiles/main.dir/main.cpp.o -c /home/logan/CodeProjects/Database_Internals/main.cpp
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/logan/CodeProjects/Database_Internals/CMakeFiles --progress-num=$(CMAKE_PROGRESS_8) "Building CXX object CMakeFiles/main.dir/main.cpp.o"
+	/usr/bin/clang++-20 $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/main.dir/main.cpp.o -MF CMakeFiles/main.dir/main.cpp.o.d -o CMakeFiles/main.dir/main.cpp.o -c /home/logan/CodeProjects/Database_Internals/main.cpp
 
 CMakeFiles/main.dir/main.cpp.i: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing CXX source to CMakeFiles/main.dir/main.cpp.i"
-	/usr/bin/clang++-19 $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/logan/CodeProjects/Database_Internals/main.cpp > CMakeFiles/main.dir/main.cpp.i
+	/usr/bin/clang++-20 $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/logan/CodeProjects/Database_Internals/main.cpp > CMakeFiles/main.dir/main.cpp.i
 
 CMakeFiles/main.dir/main.cpp.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling CXX source to assembly CMakeFiles/main.dir/main.cpp.s"
-	/usr/bin/clang++-19 $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/logan/CodeProjects/Database_Internals/main.cpp -o CMakeFiles/main.dir/main.cpp.s
+	/usr/bin/clang++-20 $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/logan/CodeProjects/Database_Internals/main.cpp -o CMakeFiles/main.dir/main.cpp.s
 
 # Object files for target main
 main_OBJECTS = \
+"CMakeFiles/main.dir/BPTreeTest.cpp.o" \
 "CMakeFiles/main.dir/Bp-Tree/bptree.cpp.o" \
 "CMakeFiles/main.dir/Disk/PageGuard.cpp.o" \
 "CMakeFiles/main.dir/DiskTest.cpp.o" \
+"CMakeFiles/main.dir/ThreadPoolTest.cpp.o" \
 "CMakeFiles/main.dir/helpers.cpp.o" \
 "CMakeFiles/main.dir/macros.cpp.o" \
 "CMakeFiles/main.dir/main.cpp.o"
@@ -165,15 +195,17 @@ main_OBJECTS = \
 # External object files for target main
 main_EXTERNAL_OBJECTS =
 
+main: CMakeFiles/main.dir/BPTreeTest.cpp.o
 main: CMakeFiles/main.dir/Bp-Tree/bptree.cpp.o
 main: CMakeFiles/main.dir/Disk/PageGuard.cpp.o
 main: CMakeFiles/main.dir/DiskTest.cpp.o
+main: CMakeFiles/main.dir/ThreadPoolTest.cpp.o
 main: CMakeFiles/main.dir/helpers.cpp.o
 main: CMakeFiles/main.dir/macros.cpp.o
 main: CMakeFiles/main.dir/main.cpp.o
 main: CMakeFiles/main.dir/build.make
 main: CMakeFiles/main.dir/link.txt
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --bold --progress-dir=/home/logan/CodeProjects/Database_Internals/CMakeFiles --progress-num=$(CMAKE_PROGRESS_7) "Linking CXX executable main"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --bold --progress-dir=/home/logan/CodeProjects/Database_Internals/CMakeFiles --progress-num=$(CMAKE_PROGRESS_9) "Linking CXX executable main"
 	$(CMAKE_COMMAND) -E cmake_link_script CMakeFiles/main.dir/link.txt --verbose=$(VERBOSE)
 
 # Rule to build all files generated by this target.

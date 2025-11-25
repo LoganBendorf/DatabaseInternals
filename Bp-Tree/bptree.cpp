@@ -641,7 +641,7 @@ static FreeBlock charptr_to_freeblock(char* ptr) noexcept {
 }
 
 class FreeListIterator {
-    char* data;
+    BPTreeNode node;
     char* prev_offset_loc;
     unsigned short previous_offset;
     FreeBlock freeblock;
@@ -654,18 +654,25 @@ class FreeListIterator {
     using pointer = const value_type*;
     using reference = value_type;
 
-    explicit FreeListIterator(char* data, char* start, int index = 0) 
-      : data(data),
+    explicit FreeListIterator(BPTreeNode node, char* start, int index = 0) 
+      : node(node),
         prev_offset_loc(start), 
         previous_offset(charptr_to_ushrt(prev_offset_loc)), 
-        freeblock(charptr_to_freeblock(data + previous_offset)) ,
+        freeblock(charptr_to_freeblock(node.data + previous_offset)) ,
         index(index)
     {}
 
     FreeListIterator& operator++() noexcept {
-        prev_offset_loc = data + previous_offset;
+        const auto page_size = node.tree_header.get_page_size();
+        if (previous_offset >= page_size) { // Overflow page
+            const auto pid = node.header.get_next_overflow();
+            BPTreeNode::discount_ass_copy_assignment(node, pid);
+            previous_offset -= page_size;
+        }
+
+        prev_offset_loc = node.data + previous_offset;
         previous_offset = freeblock.next_offset;
-        freeblock = charptr_to_freeblock(data + previous_offset);
+        freeblock = charptr_to_freeblock(node.data + previous_offset);
         ++index;
         return *this;
     }
@@ -696,20 +703,19 @@ class FreeListIterator {
 
 // Wrapper class for range-based for loop
 class FreeListRange {
-    char* data;
+    BPTreeNode node;
     char* start;
     unsigned int count;
 
 public:
-    FreeListRange(char* data, char* start, unsigned int count)
-        : data(data), start(start), count(count) {}
+    FreeListRange(BPTreeNode node, char* start, unsigned int count) : node(node), start(start), count(count) {}
 
     FreeListIterator begin() const {
-        return FreeListIterator(data, start, 0);
+        return FreeListIterator(node, start, 0);
     }
 
     FreeListIterator end() const {
-        return FreeListIterator(data, start, count);
+        return FreeListIterator(node, start, count);
     }
 };
 
@@ -719,17 +725,19 @@ auto BPTreeNode::leaf_get_free_slot(const unsigned int record_size) const -> std
     if (header.get_type() != LEAF)  { FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("leaf_get_free_slot(): Called with non-leaf"); }
 
     const unsigned int req_size = record_size + RECORD_HEADER_SIZE; 
+    const auto page_size = tree_header.get_page_size();
 
-    FreeListRange freelist(data, header.get_free_start_as_char_ptr(), header.get_num_free());
+    FreeListRange freelist(*this, header.get_free_start_as_char_ptr(), header.get_num_free());
 
     for (const auto& p: freelist) {
         const auto& prev_offset_loc = p.first;
-        const auto& freeblock = p.second;
-        // const unsigned short prev_offset = charptr_to_ushrt(prev_offset_loc);
+        const FreeBlock& freeblock = p.second;
+
         if (freeblock.size >= req_size) {
-            return {prev_offset_loc, true}; }
-        if (freeblock.next_offset == 0) {
-            return {prev_offset_loc, false}; }
+            return {prev_offset_loc, true}; 
+        } else if (freeblock.next_offset == 0) {
+            return {prev_offset_loc, false};
+         }
     }
 
     FATAL_ERROR_STACK_TRACE_EXIT_CUR_LOC("Probably shouldn't be here idk");
@@ -803,19 +811,28 @@ auto BPTreeNode::insert_into_leaf(const Record record) -> std::pair<int, page_id
     char* const prev_offset_loc = addr;
     const unsigned short  offset      = charptr_to_ushrt(prev_offset_loc);
     FreeBlock             freeblock   = charptr_to_freeblock(data + offset);
-    const unsigned short  next_offset = freeblock.next_offset;
+    unsigned short        next_offset = freeblock.next_offset;
     const unsigned short  prev_size   = freeblock.size;
 
     write_record(offset, record);
 
     const int total_record_size = record.header.size + RECORD_HEADER_SIZE;
     const unsigned short remaining_size = prev_size - total_record_size;
-    if (remaining_size <= 2) {
+    if (remaining_size < 4) { // Not enough room for freeblock
         header.set_num_fragmented(header.get_num_fragmented() + remaining_size);
         std::memcpy(prev_offset_loc, &next_offset, sizeof(unsigned short)); // *prev_offset = next_offset;
     } else {
         const unsigned short free_block_offset = offset + total_record_size;
-        write_freeblock(free_block_offset, FreeBlock{next_offset, remaining_size});
+        const auto page_size = tree_header.get_page_size();
+        // Check if freeblock would be contigous, then combine
+        unsigned short total_size = remaining_size;
+        while (next_offset != 0  && next_offset < page_size /*overflow case*/ && free_block_offset + total_size == next_offset) {
+            FreeBlock next_freeblock = charptr_to_freeblock(data + next_offset);
+            total_size += next_freeblock.size;
+            next_offset = next_freeblock.next_offset;
+        }
+        write_freeblock(free_block_offset, FreeBlock{next_offset, total_size});
+
         std::memcpy(prev_offset_loc, &free_block_offset, sizeof(unsigned short)); // *prev_offset = free_block_offset;
     }
 
@@ -1076,7 +1093,7 @@ void BPTreeNode::delete_from_leaf(const int offset) {
     header.set_n(header.get_n() - 1);
 
     // Fix freeblock chain //
-    FreeListRange freelist(data, header.get_free_start_as_char_ptr(), header.get_num_free());
+    FreeListRange freelist(*this, header.get_free_start_as_char_ptr(), header.get_num_free());
 
     char* last_offset_loc = nullptr;
     for (const auto& p : freelist) {
@@ -1087,13 +1104,24 @@ void BPTreeNode::delete_from_leaf(const int offset) {
         // TODO: Overflow case. Next freeblock to point to is in another page
 
         if (prev_offset > offset) { // Insert into middle of chain
+
+            // Check if freeblock would be contigous, then combine
+            const auto page_size = tree_header.get_page_size();
+            unsigned short total_size = record_size;
+            unsigned short next_offset = prev_offset;
+            while (next_offset != 0 && next_offset < page_size /*overflow case*/ &&  offset + total_size == next_offset) {
+                FreeBlock next_freeblock = charptr_to_freeblock(data + next_offset);
+                total_size += next_freeblock.size;
+                next_offset = next_freeblock.next_offset;
+            }
+
+            write_freeblock(offset, FreeBlock{next_offset, total_size});
             std::memcpy(prev_offset_loc, &offset, sizeof(unsigned short)); // *prev_offset = offset
-            write_freeblock(offset, FreeBlock{prev_offset, record_size});
             header.set_num_free(header.get_num_free() + 1);
             return;
         } else if (prev_offset == 0) { // Insert into end
-            std::memcpy(prev_offset_loc, &offset, sizeof(unsigned short)); // *prev_offset = offset;
             write_freeblock(offset, FreeBlock{0, record_size});
+            std::memcpy(prev_offset_loc, &offset, sizeof(unsigned short)); // *prev_offset = offset;
             header.set_num_free(header.get_num_free() + 1);
             return;
         }

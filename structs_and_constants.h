@@ -54,5 +54,5 @@ struct Record {
 constexpr int FREEBLOCK_SIZE = 4;
 struct FreeBlock {
     unsigned short next_offset;
-    unsigned short size; // remaining size includes the 4 bytes of this class. i.e total free space
+    unsigned short size; // (remaining) size includes the 4 bytes of this class. i.e total free space
 };

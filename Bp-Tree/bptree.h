@@ -17,6 +17,9 @@
 #include <climits>
 #include <set>
 
+// Type + n + num_free + free_start + num_fragmented + left sibling + right sibling + overflow
+static constexpr int bp_tree_node_header_size = sizeof(int) + sizeof(int) + sizeof(int) + sizeof(int) + sizeof(int) + sizeof(page_id_t) + sizeof(page_id_t) + sizeof(page_id_t);
+
 class BPTreeHeader {
     public:
     static constexpr page_id_t tree_header_page_id = 0;
@@ -54,6 +57,16 @@ class BPTreeHeader {
             ss << "Page size (" << page_size << ") is too small to contain record metadata ( 4 bytes for page size + " << records_size << " bytes for metadata)";
             FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC(ss.str()); 
         }   
+
+        // ///
+        // n + 1 cause lazy inserts
+        unsigned int required_keys_size_in_bytes = (branching_factor + 1) * (sizeof(key) + sizeof(page_id_t) + sizeof(int)); // [key, pid, offset]
+        if (page_size - bp_tree_node_header_size - required_keys_size_in_bytes < 0) {
+            std::stringstream ss;
+            ss << "Page size (" << page_size << ") is too small to contain the number of keys (" << branching_factor 
+                    << ", " << required_keys_size_in_bytes << " bytes) specified by the branching factor";
+            FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC(ss.str());
+        }
     }
 
     BPTreeHeader() : data(get_page(tree_header_page_id)) {
@@ -79,29 +92,14 @@ class BPTreeHeader {
 };
 
 class BPTreeNodeHeader {
-    static constexpr int size = sizeof(int) + sizeof(int) + sizeof(int) + sizeof(int) + sizeof(int) + sizeof(page_id_t) + sizeof(page_id_t) + sizeof(page_id_t);
+    static constexpr int size = bp_tree_node_header_size;
     public:
-    char* const data;
-    const BPTreeHeader& tree_header;
-
-    // Type + n + num_free + free_start + num_fragmented + left sibling + right sibling + overflow
-
+    char* data;
 
     // Read field tuple data
-    BPTreeNodeHeader(char* data, const BPTreeHeader& tree_header) : data(data), tree_header(tree_header) {
-        // n + 1 cause lazy inserts
-        const int page_size        = tree_header.get_page_size();
-        const int branching_factor = tree_header.get_branching_factor();
-        unsigned int required_keys_size_in_bytes = (branching_factor + 1) * (sizeof(key) + sizeof(page_id_t) + sizeof(int)); // [key, pid, offset] + 
-        if (page_size - size - required_keys_size_in_bytes < 0) {
-            std::stringstream ss;
-            ss << "Page size (" << page_size << ") is too small to contain the number of keys (" << branching_factor 
-                    << ", " << required_keys_size_in_bytes << " bytes) specified by the branching factor";
-            FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC(ss.str());
-        }
-    }
+    BPTreeNodeHeader(char* data) : data(data) {}
 
-    [[nodiscard]] constexpr int get_header_size() const noexcept { return size; }
+    [[nodiscard]] static constexpr int get_header_size()  noexcept { return size; }
 
     // Getters and setters in the same order as the binary format
 
@@ -182,14 +180,22 @@ class BPTreeNode {
     BPTreeNodeHeader header;
     const BPTreeHeader& tree_header;
 
-    explicit BPTreeNode() = delete;
-    explicit BPTreeNode(page_id_t) = delete;
+    BPTreeNode() = delete;
+    BPTreeNode(page_id_t) = delete;
 
     // Given page by bufer pool manager
     // Eventually use page->get_data() instead of having raw char*
-    explicit BPTreeNode(const page_id_t page_id, const BPTreeHeader& tree_header) : page_id(page_id), data(get_page(page_id)), header(data, tree_header), tree_header(tree_header) {
+    explicit BPTreeNode(const page_id_t page_id, const BPTreeHeader& tree_header) : page_id(page_id), data(get_page(page_id)), header(data), tree_header(tree_header) {
         STACK_TRACE_ASSERT(page_id > 0);
     }
+
+
+    static void discount_ass_copy_assignment(BPTreeNode& cur, const page_id_t new_pid) {
+        cur.page_id = new_pid;
+        cur.data = get_page(new_pid);
+        cur.header = BPTreeNodeHeader{cur.data};
+    }
+
 
     ///////////////////// INFO ////////////////////////
     // For all node types, max number of children == n
@@ -789,10 +795,16 @@ class RecordValidator {
                 const Record got = record_location.value();
                 const unsigned int got_size    = got.header.size;
                 const unsigned int record_size = record.header.size;
+                const unsigned int got_type    = got.header.type;
+                const unsigned int record_type = record.header.type;
                 const std::string  got_str{got.data, got_size}; 
                 const std::string  record_str{record.data, record_size}; 
                 if (got_size != record_size) {
-                    std::cerr << "\nValidator: Found record for key " << key << " but it contained the wrong value with an incorrect size."
+                    std::cerr << "\nValidator: Found record for key " << key << " but the contained value had an incorrect SIZE."
+                        << "Expected (" << record_str << ", " << record_size << "), got (" << got_str << ", " << got_size << ")\n"; 
+                    return false;
+                } else if (got_type != record_type) {
+                    std::cerr << "\nValidator: Found record for key " << key << " but the contained value had an incorrect TYPE."
                         << "Expected (" << record_str << ", " << record_size << "), got (" << got_str << ", " << got_size << ")\n"; 
                     return false;
                 } else if (got_str != record_str) {

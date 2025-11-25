@@ -23,12 +23,11 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 # Compiler flags
-# add_compile_options(-g -Wno-writable-strings)
-add_compile_options(-g -fsanitize=undefined,signed-integer-overflow -Wno-writable-strings)
+add_compile_options(-g -O0 -Wno-writable-strings)
+# add_compile_options(-g -fsanitize=address,undefined,signed-integer-overflow -Wno-writable-strings)
 
 # Linker option
-set(SANITIZER_FLAGS "-fsanitize=undefined,signed-integer-overflow")
-
+# set(SANITIZER_FLAGS "-fsanitize=address,undefined,signed-integer-overflow")
 
 # Source and include directories (match your Makefile: ".", "Disk", "Bp-Tree")
 set(SRC_DIRS
@@ -50,6 +49,12 @@ file(GLOB SRCS
 
 # Main executable
 add_executable(main ${SRCS})
+
+
+# Coz profiler
+target_compile_options(main PRIVATE -gdwarf-4)
+target_link_libraries(main PRIVATE dl pthread profiler)
+
 
 # Color
 if(NOT DEFINED CMAKE_COLOR_MAKEFILE)
@@ -73,6 +78,8 @@ else()
   # fallback
   set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${SANITIZER_FLAGS}")
 endif()
+
+
 
 # Also propagate compile options to the target (in case add_compile_options wasn't enough)
 # target_compile_options(main PRIVATE -g -Wno-writable-strings -fsanitize=undefined,signed-integer-overflow)

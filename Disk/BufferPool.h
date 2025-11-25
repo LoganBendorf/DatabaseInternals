@@ -268,7 +268,7 @@ class BufferPool {
             // Remove BP state
             free_frames.emplace(frame);
             const page_id_t cur_pid = frame_to_page_map[frame];
-            // std::cout << "Evicting pid (" << cur_pid << ", frame (" << frame << ")" << std::endl;
+            std::cout << "Evicting pid (" << cur_pid << ", frame (" << frame << ")" << std::endl;
             page_to_frame_map.erase(cur_pid);
             frame_to_page_map.erase(frame);
             frame_accesses.insert_or_assign(frame, 0);
@@ -280,7 +280,7 @@ class BufferPool {
 
     void deallocate_page(const page_id_t pid, const AccessType access_type, std::unique_lock<std::mutex>& lock) {
         STACK_TRACE_ASSERT(lock.owns_lock());
-        std::cout << "Deallocating pid (" << pid << ", access type (" << (access_type == WRITE ? "WRITE" : "READ") << ")" << std::endl;
+        // std::cout << "Deallocating pid (" << pid << ", access type (" << (access_type == WRITE ? "WRITE" : "READ") << ")" << std::endl;
 
         auto frame_it = page_to_frame_map.find(pid);
         if (frame_it == page_to_frame_map.end()) {
@@ -289,7 +289,7 @@ class BufferPool {
         lock.unlock();
         
         frame_lock.unlock_frame(frame, access_type);
-        std::cout << "Successfully deallocated pid (" << pid << ", access type (" << (access_type == WRITE ? "WRITE" : "READ") << ")" << std::endl;
+        // std::cout << "Successfully deallocated pid (" << pid << ", access type (" << (access_type == WRITE ? "WRITE" : "READ") << ")" << std::endl;
     }
 
     [[nodiscard]] auto disk_read(const page_id_t pid, const frame_id_t frame, std::unique_lock<std::mutex>& lock) -> bool { // Must be called with lock held
