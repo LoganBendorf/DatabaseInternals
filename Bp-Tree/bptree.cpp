@@ -31,8 +31,6 @@
 
 
 static constexpr std::string ASCII_BLACK = "\033[30m";
-static constexpr std::string ASCII_GREEN = "\033[32m";
-static constexpr std::string ASCII_RESET  = "\033[0m";
 
 void BPTreeNode::print_bytes() const noexcept {
     const auto type       = header.get_type();

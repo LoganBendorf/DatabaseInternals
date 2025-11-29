@@ -23,11 +23,14 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 # Compiler flags
-add_compile_options(-g -O0 -Wno-writable-strings)
-# add_compile_options(-g -fsanitize=address,undefined,signed-integer-overflow -Wno-writable-strings)
+add_compile_options(-g -O1 -Wno-writable-strings)
+# add_compile_options(-g -O2 -fsanitize=address,undefined,signed-integer-overflow -Wno-writable-strings)
 
 # Linker option
 # set(SANITIZER_FLAGS "-fsanitize=address,undefined,signed-integer-overflow")
+# 
+# LTO
+set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
 
 # Source and include directories (match your Makefile: ".", "Disk", "Bp-Tree")
 set(SRC_DIRS
@@ -52,8 +55,8 @@ add_executable(main ${SRCS})
 
 
 # Coz profiler
-target_compile_options(main PRIVATE -gdwarf-4)
-target_link_libraries(main PRIVATE dl pthread profiler)
+# target_compile_options(main PRIVATE -gdwarf-4)
+# target_link_libraries(main PRIVATE dl pthread profiler)
 
 
 # Color

@@ -35,7 +35,6 @@ void insert_print() {
 
 static constexpr std::string ASCII_BG_YELLOW = "\033[103m";
 static constexpr std::string ASCII_BG_GREEN  = "\033[102m";
-static constexpr std::string ASCII_RESET = "\033[0m";
 
 void insert_and_validate(auto& tree, RecordValidator& validator, const int key, const Record record) {
     std::cout << ASCII_BG_YELLOW << "insert(" << key << ", " << record << ")" << ASCII_RESET << std::endl;

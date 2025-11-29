@@ -12,7 +12,7 @@ WritePageGuard& WritePageGuard::operator=(WritePageGuard&& other) noexcept {
 
         release_func = std::move(other.release_func);
         page = other.page;
-        valid = other.valid; // take ownership
+        valid = other.valid; // incase false
         other.valid = false;
     }
     return *this;

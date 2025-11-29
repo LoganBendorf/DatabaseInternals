@@ -1,5 +1,7 @@
 #pragma once
 
+#include "helpers.h"
+
 #include <functional>
 #include <iostream>
 #include <mutex>
@@ -9,19 +11,55 @@
 #include <condition_variable>
 #include <atomic>
 
+
+template<typename Func, typename... Args>
+struct Task {
+    Func func;  // Function pointer or callable
+    std::tuple<std::decay_t<Args>...> args;  // Arguments stored in tuple
+    
+    void execute() {
+        std::apply(func, args);  // C++17: unpack tuple and call function
+    }
+};
+
+
+// Check CLAUDE for allocator
+// Also add allocator to BufferPool
+
+// template<typename Allocator = std::allocator<std::byte>>
 class ThreadPool {
 
-    using work_func_t = std::function<void()>;
+    struct TaskWrapper {
+        virtual ~TaskWrapper() = default;
+        virtual void execute() = 0;
+    };
+
+    template<typename Func, typename... Args>
+    struct TaskImpl : TaskWrapper {
+        Func func;
+        std::tuple<std::decay_t<Args>...> args;
+        
+        // Remove && from constructor - just take by value since we're storing anyway
+        TaskImpl(Func f, std::decay_t<Args>... a) 
+            : func(std::move(f))
+            , args(std::move(a)...) {}
+        
+        void execute() override {
+            std::apply(func, args);
+        }
+    };
+
+    std::deque<std::unique_ptr<TaskWrapper>> work;
     
     std::vector<std::thread> workers;
-    std::atomic<int> num_workers;
+    int num_workers;
     std::atomic<int> ready_workers;
-    std::deque<work_func_t> work;
+    std::atomic<int> tasks_in_flight; 
     std::mutex mu;
     std::condition_variable work_cv;
     std::atomic<bool> should_stop{false};
 
-    [[nodiscard]] auto get_work() noexcept -> std::pair<work_func_t, bool> {
+    [[nodiscard]] auto get_work() noexcept -> std::optional<std::unique_ptr<TaskWrapper>> {
         // std::cout << "worker getting lock\n";
         std::unique_lock lock{mu};
         work_cv.wait(lock, [this]() { 
@@ -30,12 +68,12 @@ class ThreadPool {
         // if (should_stop.load() == true) { return {nullptr, false}; } // If == true, die before all work is done. Ignore check == do work then die
         // std::cout << "worker getting work\n";
         if (!work.empty()) {
-            work_func_t f = std::move(work.front()); work.pop_front();
-            // std::cout << "worker got work\n";
-            return std::pair{std::move(f), true};
+            auto task = std::move(work.front());
+            work.pop_front();
+            return std::move(task);
         }
-            // std::cout << "worker failed to get work\n";
-        return std::pair{nullptr, false};
+        // std::cout << "worker failed to get work\n";
+        return std::nullopt;
     }
     
     public:
@@ -45,13 +83,18 @@ class ThreadPool {
         while (ready_workers.load(std::memory_order_acquire) != num_workers) {
             std::this_thread::yield();
         }
+
+        tasks_in_flight.fetch_add(1, std::memory_order_release);
+
+        auto task = std::make_unique<TaskImpl<std::decay_t<Func>, std::decay_t<Args>...>>(
+            std::forward<Func>(f), 
+            std::forward<Args>(args)...
+        );
+        
         mu.lock();
-        work.emplace_back([f = std::forward<Func>(f), ...args = std::forward<Args>(args)]() mutable {
-            f(args...);
-        });
+        work.emplace_back(std::move(task));
         mu.unlock();
         work_cv.notify_one();
-        // std::cout << "gave work\n";
     }
 
     ThreadPool(const size_t num_workers) : num_workers(num_workers) {
@@ -60,13 +103,19 @@ class ThreadPool {
         for (size_t i = 0; i < num_workers; i++) {
             auto worker_lambda = [this]() {
                 bool init = false;
-                while (should_stop.load() == false) {
+                while (should_stop.load(std::memory_order_acquire) == false) {
                     // std::cout << "worker waiting for notification\n";
-                    if (!init) { ready_workers++; init = true; }
+                    if (!init) { ready_workers.fetch_add(1, std::memory_order_relaxed); init = true; }
                     // Check for work //
-                    if (auto p = get_work(); p.second) {
+                    if (auto task_opt = get_work(); task_opt.has_value()) {
                         // std::cout << "Got job\n";
-                        p.first();
+                        try {
+                            task_opt.value()->execute();
+                        } catch (std::exception e) {
+                            THREAD_PRINT(": exception while executing work from ThreadPool");
+                        }
+
+                        tasks_in_flight.fetch_sub(1, std::memory_order_acq_rel);
                     } else {
                         // std::cout << "no job\n";
                     }
@@ -77,8 +126,20 @@ class ThreadPool {
         }
     }
 
+    // Obsurdly slow, much faster to just call dtor and recreate pool lol (~4-10x in tests when recreating many times, so performance in practice is probably a lot worse)
+    void wait_until_idle() const noexcept {
+        uint32_t backoff = 1024 * 64 * 64;
+        const uint32_t max_backoff = 1'000'000; // 1ms worst-case
+        while (tasks_in_flight.load(std::memory_order_acquire) != 0) {
+            // std::this_thread::yield();
+            std::this_thread::sleep_for(std::chrono::nanoseconds(backoff));
+            backoff *= 2;
+            backoff = std::min(backoff * 2, max_backoff);
+        }
+    }
+
     ~ThreadPool() {
-        should_stop.store(true);
+        should_stop.store(true  );
         work_cv.notify_all();
         for (auto& worker : workers) {
             worker.join(); }

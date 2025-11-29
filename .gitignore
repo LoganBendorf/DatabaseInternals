@@ -1,10 +1,11 @@
 Test
 .vscode
 build
-CMakeFiless
+CMakeFiles
 Makefile
 tsan.suppress
 .clangd
 .gitignore
 coz
 perf.data
+temp

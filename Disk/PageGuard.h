@@ -12,10 +12,10 @@
 // Holds lock until dtor is called
 class WritePageGuard {
     std::function<void(Page&)> release_func;
-    Page page;
     bool valid;
+    Page page;
     public:
-    explicit WritePageGuard() noexcept : page(0, 0, 0), valid(false) {}
+    explicit WritePageGuard() noexcept : page(nullptr, 0, 0), valid(false) {}
     explicit WritePageGuard(std::function<void(Page&)> release_func, Page page) noexcept : release_func(std::move(release_func)), page(page), valid(true) {}
 
     // Disable copy ctor and copy assignment
@@ -33,22 +33,30 @@ class WritePageGuard {
     ~WritePageGuard() noexcept;
     void release() noexcept;
 
+    // Throw if not valid?
     void write(std::string_view msg, const size_t page_offset) {
+        if (!valid) { FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("WritePageGuard::write(): Attempted to write to an invalid guard"); }
         if (page_offset >= page.page_size) { FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("WritePageGuard:write(): OOB offset (" + std::to_string(page_offset) + ") for page size (" + std::to_string(page.page_size) + ")"); }
         if (msg.size() + page_offset > page.page_size) { FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("WritePageGuard:write(): OOB write"); }
         std::memcpy(page.data + page_offset, msg.data(), msg.size());
     }
-
-    [[nodiscard]] auto read() const noexcept -> std::string_view{
+    
+    [[nodiscard]] auto read() const -> std::string_view{
+        if (!valid) { FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("WritePageGuard::read(): Attempted to read an invalid guard"); }
         return std::string_view{page.data, page.page_size};
+    }
+
+    [[nodiscard]] page_id_t pid() const { 
+        if (!valid) { FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("WritePageGuard::pid(): Attempted to access pid of an invalid guard"); }
+        return page.pid; 
     }
 };
 
 // Holds lock until dtor is called
 class ReadPageGuard {
     std::function<void(Page&)> release_func;
-    Page page;
     bool valid;
+    Page page;
     public:
     explicit ReadPageGuard() noexcept : page(0, 0, 0), valid(false) {}
     explicit ReadPageGuard(std::function<void(Page&)> release_func, Page page) noexcept : release_func(std::move(release_func)), page(page), valid(true) {}
@@ -68,7 +76,14 @@ class ReadPageGuard {
     ~ReadPageGuard() noexcept;
     void release() noexcept;
 
-    [[nodiscard]] auto read() const noexcept -> std::string_view{
+    // Throw if not valid?
+    [[nodiscard]] auto read() const -> std::string_view{
+        if (!valid) { FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("ReadPageGuard::read(): Attempted to read an invalid guard"); }
         return std::string_view{page.data, page.page_size};
+    }
+
+    [[nodiscard]] page_id_t pid() const { 
+        if (!valid) { FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("readPageGuard::pid(): Attempted to access pid of an invalid guard"); }
+        return page.pid; 
     }
 };

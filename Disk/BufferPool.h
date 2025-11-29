@@ -71,6 +71,9 @@ class RAII_File {
 
 
 
+
+enum PageGuardFailRC { ok, disk_error, page_in_use, bp_full };
+
 template<typename T>
 concept CharAllocator = requires {
     typename T::value_type;
@@ -123,7 +126,7 @@ class BufferPool {
         for (const auto& p : frame_to_page_map) {
             const page_id_t pid = p.second;
             if (unique_pages.contains(pid)) {
-                FATAL_ERROR_STACK_TRACE_EXIT_CUR_LOC("BP.frame_to_page_map contained multiple page to frame mappings. Supposed to be unique. i.e. 1 page -> 1 frame. Found n pages -> 1 frame");
+                FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("BP.frame_to_page_map contained multiple page to frame mappings. Supposed to be unique. i.e. 1 page -> 1 frame. Found n pages -> 1 frame");
             }
             unique_pages.emplace(pid);
         }
@@ -140,22 +143,20 @@ class BufferPool {
         public:
         explicit FrameLock(BufferPool& bp) : bp(bp), frame_mu(bp.page_count), write_requests(bp.page_count), read_requests(bp.page_count) {}
 
-        // When function exists, bp_lock will be held
         void write_lock_frame(const frame_id_t frame, std::unique_lock<std::mutex>& bp_lock) {
             STACK_TRACE_ASSERT(bp_lock.owns_lock());
             write_requests[frame].fetch_add(1);
             bp_lock.unlock();
-            frame_mu[frame].lock();
+            frame_mu[frame].lock(); // Might need to be a try_lock() in the future and let the called deal with it
             bp_lock.lock();
             write_requests[frame].fetch_sub(1);
         }
 
-        // When function exists, bp_lock will be held
         void read_lock_frame(const frame_id_t frame, std::unique_lock<std::mutex>& bp_lock) {
             STACK_TRACE_ASSERT(bp_lock.owns_lock());
             read_requests[frame].fetch_add(1);
             bp_lock.unlock();
-            frame_mu[frame].lock_shared();
+            frame_mu[frame].lock_shared(); // Might need to be a try_lock() in the future and let the called deal with it
             bp_lock.lock();
             read_requests[frame].fetch_sub(1);
         }
@@ -268,7 +269,7 @@ class BufferPool {
             // Remove BP state
             free_frames.emplace(frame);
             const page_id_t cur_pid = frame_to_page_map[frame];
-            std::cout << "Evicting pid (" << cur_pid << ", frame (" << frame << ")" << std::endl;
+            THREAD_PRINT("evicting pid (" + std::to_string(cur_pid) + ", frame (" + std::to_string(frame) + ")");
             page_to_frame_map.erase(cur_pid);
             frame_to_page_map.erase(frame);
             frame_accesses.insert_or_assign(frame, 0);
@@ -329,7 +330,7 @@ class BufferPool {
     using frame_requests_set_Allocator  = typename Traits::template rebind_alloc<page_id_t>;
     std::unordered_set<page_id_t, std::hash<page_id_t>, std::equal_to<page_id_t>, frame_requests_set_Allocator> frame_requests;
 
-    [[nodiscard]] auto get_frame(const page_id_t pid, AccessType access_type, std::unique_lock<std::mutex>& bp_lock) -> std::optional<frame_id_t> {
+    [[nodiscard]] auto get_frame(const page_id_t pid, AccessType access_type, std::unique_lock<std::mutex>& bp_lock) -> std::pair<frame_id_t, PageGuardFailRC> {
         STACK_TRACE_ASSERT(bp_lock.owns_lock());
 
         START:
@@ -341,7 +342,7 @@ class BufferPool {
             frame_lock.lock_frame(frame, access_type, bp_lock);
 
             STACK_TRACE_ASSERT(page_to_frame_map.find(pid)!= page_to_frame_map.end());
-            return frame;
+            return {frame, ok};
         }
         
         // Not in memory, make request
@@ -350,11 +351,15 @@ class BufferPool {
         if (frame_requests.contains(pid) ) {
 
             bp_lock.unlock();
+            uint32_t backoff = 512;
+            constexpr uint32_t max_backoff = 1'000'000; // 1ms worst-case
             while (true) {
                 bp_lock.lock();
                 if (!frame_requests.contains(pid)) { break; }
                 bp_lock.unlock();
-                std::this_thread::yield();
+                // std::this_thread::yield();
+                backoff *= 2;
+                backoff = std::min(backoff * 2, max_backoff);
             }
             STACK_TRACE_ASSERT(bp_lock.owns_lock());
             goto START;
@@ -362,7 +367,7 @@ class BufferPool {
             
             if (free_frames.empty()) { // Evict if full
                 const bool ok = evict(bp_lock);
-                if (!ok) { return std::nullopt; }
+                if (!ok) { return {{}, bp_full}; }
             }
             STACK_TRACE_ASSERT(!free_frames.empty());
             
@@ -376,12 +381,13 @@ class BufferPool {
 
             // Disk read
             const bool ok = disk_read(pid, frame, bp_lock);
-            if (!ok) { std::cerr << "\nREAD FAIL\n"; exit(1); frame_requests.erase(pid); return std::nullopt; }
+            if (!ok) { FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("DISK READ FAILED"); frame_requests.erase(pid); return {{}, disk_error}; }
             // Add state to BP
             page_to_frame_map.emplace(pid, frame);
             frame_to_page_map.emplace(frame, pid);
             frame_requests.erase(pid);
-            return frame;
+
+            return {frame, PageGuardFailRC::ok};
         }
     }
 
@@ -396,31 +402,40 @@ class BufferPool {
         deallocate_page(page.pid, READ, lock);
     }
 
-    [[nodiscard]] auto get_write_page_guard(const page_id_t pid) -> std::optional<WritePageGuard> {
+
+    // If guards are acquired in 2 different directions by different threads, it will deadlock
+    //  i.e. thread 1 acquires pid 0 then pid 1, while thread 2 acquires pid 1 then pid 0
+    //  The sequence must be the same even if more locks are held, i.e. acquire pids 0, 2, 5, must release in the order 0, 2, 5. Quite tricky with multiple threads
+    //  Not much of a problem with B+-Tree because you always acquire them going down, or sideways. Only a problem if you do something dumb (probably)
+    // Also if multiple write guards are taken out by the same thread it will deadlock
+
+    // If threads only check out 2 pages in a strictly increasing order and release them in acquisition order, it will never deadlock
+    //  This is not true with num threads >= 3. i.e. thread (1) 2, 5, 7; thread (2) 5, 7, 8; thread (3) 7, 8, 9; can deadlock. That might not be the right example idk but 3 threads do deadlock when 2 don't
+    //  Might take a very very long time
+
+    [[nodiscard]] auto get_write_page_guard(const page_id_t pid) -> std::pair<WritePageGuard, PageGuardFailRC> {
         std::unique_lock bp_lock(mu);
 
-        auto frame_opt = get_frame(pid, WRITE, bp_lock);
-        if (!frame_opt.has_value()) { return std::nullopt; }
-        const frame_id_t frame = frame_opt.value();
+        const auto [frame, rc] = get_frame(pid, WRITE, bp_lock);
+        if (rc != ok) { return {WritePageGuard{}, rc}; }
 
         increment_frame_accesses(frame);
 
         Page page{memory + page_size * frame, page_size, pid};
         sanity_check(bp_lock);
-        return WritePageGuard{ [this](Page p) { this->write_unlock(p); }, page};
+        return {WritePageGuard{ [this](Page p) { this->write_unlock(p); }, page}, ok};
     }
 
-    [[nodiscard]] auto get_read_page_guard(const page_id_t pid) -> std::optional<ReadPageGuard> {
+    [[nodiscard]] auto get_read_page_guard(const page_id_t pid) -> std::pair<ReadPageGuard, PageGuardFailRC> {
         std::unique_lock bp_lock(mu);
 
-        auto frame_opt = get_frame(pid, READ, bp_lock);
-        if (!frame_opt.has_value()) { return std::nullopt; }
-        const frame_id_t frame = frame_opt.value();
+        const auto [frame, rc] = get_frame(pid, READ, bp_lock);
+        if (rc != ok) { return {ReadPageGuard{}, rc}; }
 
         increment_frame_accesses(frame);
 
         Page page{memory + page_size * frame, page_size, pid};
         sanity_check(bp_lock);
-        return ReadPageGuard{ [this](Page p) { this->read_unlock(p); }, page};
+        return {ReadPageGuard{ [this](Page p) { this->read_unlock(p); }, page}, ok};
     }
 };
