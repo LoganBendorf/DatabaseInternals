@@ -9,3 +9,4 @@ tsan.suppress
 coz
 perf.data
 temp
+DebugNotes

@@ -53,7 +53,8 @@ bool vec_loe_any(const std::vector<T>& vec, const T& element, size_t max = std::
     return false;
 }
 
-void read_func(BufferPool<std::allocator<char>>& bp, std::atomic<int>& reader_count, const unsigned int timer, const unsigned int num_loops) {
+template <typename BP_T>
+void read_func(BP_T& bp, std::atomic<int>& reader_count, const unsigned int timer, const unsigned int num_loops) {
     int MAX_PID = num_loops;
 
     // std::cout << "Read work started\n";
@@ -126,7 +127,8 @@ void read_func(BufferPool<std::allocator<char>>& bp, std::atomic<int>& reader_co
     reader_count.fetch_sub(1);
 };
 
-void write_func(BufferPool<std::allocator<char>>& bp, std::atomic<int>& writer_count, const unsigned int timer, const unsigned int num_loops) {
+template <typename BP_T>
+void write_func(BP_T& bp, std::atomic<int>& writer_count, const unsigned int timer, const unsigned int num_loops) {
     // std::cout << "Write work started\n";
     int MAX_PID = num_loops;
 
@@ -211,7 +213,9 @@ void thread_test() {
     constexpr int page_size  = 1024 * 4;
     constexpr int page_count = 20;
     const auto* const fp = "./Test/thread.test";
-    BufferPool bp(fp, page_size, page_count);
+    std::byte bp_buffer[page_size * page_count + 1024 * 4];
+    std::pmr::monotonic_buffer_resource bp_resource(bp_buffer, sizeof(bp_buffer));
+    PMRBufferPool bp(fp, page_size, page_count, &bp_resource);
 
     FastRandom_XORShift op_gen;
     constexpr int MAX_OP = 1;
@@ -222,10 +226,10 @@ void thread_test() {
     constexpr int MAX_LOOP = 15;
 
 
-    std::byte buffer[1024 * 64]; // local arena
-    std::pmr::monotonic_buffer_resource allocator(buffer, sizeof(buffer));
     constexpr int num_workers = 2;
-    PmrThreadPool pool(num_workers, &allocator);
+    std::byte pool_buffer[1024 * 64];
+    std::pmr::monotonic_buffer_resource pool_resource(pool_buffer, sizeof(pool_buffer));
+    PmrThreadPool pool(num_workers, &pool_resource);
     static std::atomic<int> reader_count = 0;
     static std::atomic<int> writer_count = 0;
     constexpr int num_ops = 600000;
@@ -237,14 +241,14 @@ void thread_test() {
                 const unsigned int num_loops = (loop_gen.next() % MAX_LOOP) + MIN_LOOP;
 
                 writer_count.fetch_add(1);
-                pool.give_work(write_func, std::ref(bp),  std::ref(writer_count), wait, num_loops);
+                pool.give_work(write_func<decltype(bp)>, std::ref(bp),  std::ref(writer_count), wait, num_loops);
             } break; 
             case 1: { // Read
                 const unsigned int wait = timer_gen.next() % MAX_TIMER;
                 const unsigned int num_loops = (loop_gen.next() % MAX_LOOP) + MIN_LOOP;
 
                 reader_count.fetch_add(1);
-                pool.give_work(read_func, std::ref(bp), std::ref(reader_count), wait, num_loops);
+                pool.give_work(read_func<decltype(bp)>, std::ref(bp), std::ref(reader_count), wait, num_loops);
             } break;
             default:
                 FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("Shouldn't be here");

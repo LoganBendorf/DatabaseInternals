@@ -75,17 +75,13 @@ class RAII_File {
 enum PageGuardFailRC { ok, disk_error, page_in_use, bp_full };
 
 template<typename T>
-concept CharAllocator = requires {
+concept Allocator = requires(T& alloc, std::size_t n) {
     typename T::value_type;
-    requires std::same_as<typename T::value_type, char>;
-    requires std::is_same_v<T, std::allocator<char>> || 
-             requires(T& alloc, std::size_t n) {
-                 { alloc.allocate(n) } -> std::convertible_to<char*>;
-                 { alloc.deallocate(std::declval<char*>(), n) } -> std::same_as<void>;
-             };
+    { alloc.allocate(n) } -> std::convertible_to<typename T::value_type*>;
+    { alloc.deallocate(std::declval<typename T::value_type*>(), n) } -> std::same_as<void>;
 };
 
-template <CharAllocator alloc_t = std::allocator<char>>    
+template <Allocator alloc_t = std::allocator<char>>  
 class BufferPool {
 
     enum AccessType { READ, WRITE };
@@ -97,11 +93,7 @@ class BufferPool {
 
     // Rebind allocators for each map's value type
     using FrameIDAllocator             = typename Traits::template rebind_alloc<frame_id_t>;
-    using IntAllocator                 = typename Traits::template rebind_alloc<int>;
-    using BoolAllocator                = typename Traits::template rebind_alloc<bool>;
-    using shared_mutexAllocator        = typename Traits::template rebind_alloc<std::shared_mutex>;
-    using condition_variable_Allocator = typename Traits::template rebind_alloc<std::condition_variable>;
-    using frame_accesses_Allocator     = typename Traits::template rebind_alloc<std::pair<const frame_id_t, unsigned>>;
+    using frame_accesses_Allocator     = typename Traits::template rebind_alloc<std::pair<const frame_id_t, unsigned int>>;
     using page_to_frame_map_Allocator  = typename Traits::template rebind_alloc<std::pair<const frame_id_t, page_id_t>>;
     using frame_to_page_map_Allocator  = typename Traits::template rebind_alloc<std::pair<const page_id_t, frame_id_t>>;
 
@@ -135,10 +127,13 @@ class BufferPool {
     static constexpr unsigned int k = 2;
 
     class FrameLock {
+        using shared_mutexAllocator = typename Traits::template rebind_alloc<std::shared_mutex>;
+        using AtomicIntAllocator    = typename Traits::template rebind_alloc<std::atomic<int>>;
+
         BufferPool& bp;
         std::vector<std::shared_mutex, shared_mutexAllocator> frame_mu;        // Frame -> Read mutex
-        std::vector<std::atomic<int>> write_requests; // So the retard doesn't free an inuse frame AND so lock doesn't block
-        std::vector<std::atomic<int>> read_requests; // So the retard doesn't free an inuse frame AND so lock doesn't block
+        std::vector<std::atomic<int>, AtomicIntAllocator> write_requests; // So the retard doesn't free an inuse frame AND so lock doesn't block
+        std::vector<std::atomic<int>, AtomicIntAllocator> read_requests; // So the retard doesn't free an inuse frame AND so lock doesn't block
 
         public:
         explicit FrameLock(BufferPool& bp) : bp(bp), frame_mu(bp.page_count), write_requests(bp.page_count), read_requests(bp.page_count) {}
@@ -200,9 +195,9 @@ class BufferPool {
 
 
     public:
-    explicit BufferPool(const std::filesystem::path file_path, const size_t page_size, const size_t page_count) 
-        : file_path(file_path), memory(Traits::allocate(allocator_, page_size * page_count)), page_size(page_size), page_count(page_count), frame_lock(*this),
-        free_frames(page_count), frame_accesses(page_count), page_to_frame_map(), frame_to_page_map(page_count) 
+    explicit BufferPool(const std::filesystem::path file_path, const size_t page_size, const size_t page_count, alloc_t allocator = alloc_t{}) 
+        : allocator_(allocator), file_path(file_path), memory(Traits::allocate(allocator_, page_size * page_count)), page_size(page_size), page_count(page_count), frame_lock(*this),
+        free_frames(page_count, allocator), frame_accesses(page_count, allocator), page_to_frame_map(allocator), frame_to_page_map(page_count, allocator) 
         {
             for (size_t i = 0; i < page_count; i++) {
                 free_frames.emplace(i);
@@ -439,3 +434,9 @@ class BufferPool {
         return {ReadPageGuard{ [this](Page p) { this->read_unlock(p); }, page}, ok};
     }
 };
+
+// Convenience alias for PMR version
+using PMRBufferPool = BufferPool<std::pmr::polymorphic_allocator<char>>;
+
+BufferPool(std::filesystem::path, size_t, size_t, std::pmr::memory_resource*) 
+    -> BufferPool<std::pmr::polymorphic_allocator<std::byte>>;
