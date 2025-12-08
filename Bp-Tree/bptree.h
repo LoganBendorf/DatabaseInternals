@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Types.h"
 #include "structs_and_constants.h"
 #include "macros.h"
 #include "helpers.h"
@@ -20,8 +21,62 @@
 // Type + n + num_free + free_start + num_fragmented + left sibling + right sibling + overflow
 static constexpr int bp_tree_node_header_size = sizeof(int) + sizeof(int) + sizeof(int) + sizeof(int) + sizeof(int) + sizeof(page_id_t) + sizeof(page_id_t) + sizeof(page_id_t);
 
-class BPTreeHeader {
+
+class BPTreeLog {
     public:
+    enum Operation : int { INSERT, UPDATE, DELETE, SPLIT_INTERMEDIATE, SPLIT_BRANCH, ALLOCATE_PAGE};
+    std::vector<std::pair<Operation, page_id_t>> ops;
+
+    void add_op(Operation op, page_id_t pid) { ops.emplace_back(op, pid); }
+
+    void clear() { ops.clear(); }
+
+    [[nodiscard]] std::vector<page_id_t> search(Operation op) {
+        std::vector<page_id_t> ret;
+        for (const auto& [o, pid] : ops) {
+            if (o == op) {
+                ret.emplace_back(pid);
+            }
+        }
+        return ret;
+    }
+
+    [[nodiscard]] static std::string op_to_str(Operation op) noexcept {
+        switch (op) {
+            case INSERT:             return "INSERT";
+            case UPDATE:             return "UPDATE";
+            case DELETE:             return "DELETE";
+            case SPLIT_INTERMEDIATE: return "SPLIT_INTERMEDIATE";
+            case SPLIT_BRANCH:       return "SPLIT_BRANCH";
+            case ALLOCATE_PAGE:      return "ALLOCATE_PAGE";
+        }
+    }
+
+    void print() {
+        for (const auto& [op, pid] : ops) {
+            std::cerr << "pid (" << pid << "): " << ASCII_BG_YELLOW << op_to_str(op) << ASCII_RESET << "\n";
+        }
+    }
+};
+
+class PageAllocator {
+    public:
+    virtual ~PageAllocator() = default;
+    [[nodiscard]] char* get_page(int index) const;
+    [[nodiscard]] page_id_t allocate_page() const;
+    void deallocate_page(page_id_t pid) const;
+    #ifdef LOG_BP_TREE
+    virtual void log_add_op(BPTreeLog::Operation, page_id_t) const = 0;
+    #endif
+};
+
+
+class BPTreeHeader : PageAllocator {
+    public:
+    #ifdef LOG_BP_TREE
+    mutable BPTreeLog* log;
+    void log_add_op(BPTreeLog::Operation op, page_id_t pid) const override { log->add_op(op, pid); }
+    #endif
     static constexpr page_id_t tree_header_page_id = 0;
     char* data;
     std::vector<std::tuple<unsigned int, SQL_data_type, char*>> fields;
@@ -53,22 +108,30 @@ class BPTreeHeader {
         }
 
         if (records_size > (int) page_size - 4 /* page_size */) { 
-            std::stringstream ss;
-            ss << "Page size (" << page_size << ") is too small to contain record metadata ( 4 bytes for page size + " << records_size << " bytes for metadata)";
-            FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC(ss.str()); 
+            FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("Page size (" + std::to_string(page_size) + ") is too small to contain record metadata ( 4 bytes for page size + " + std::to_string(records_size) + " bytes for metadata)"); 
         }   
 
         // ///
         // n + 1 cause lazy inserts
         unsigned int required_keys_size_in_bytes = (branching_factor + 1) * (sizeof(key) + sizeof(page_id_t) + sizeof(int)); // [key, pid, offset]
         if (page_size - bp_tree_node_header_size - required_keys_size_in_bytes < 0) {
-            std::stringstream ss;
-            ss << "Page size (" << page_size << ") is too small to contain the number of keys (" << branching_factor 
-                    << ", " << required_keys_size_in_bytes << " bytes) specified by the branching factor";
-            FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC(ss.str());
+
+            FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("Page size (" + std::to_string(page_size) + ") is too small to contain the number of keys (" + std::to_string(branching_factor) 
+                                                    + ", " + std::to_string(required_keys_size_in_bytes) + " bytes) specified by the branching factor");
         }
     }
 
+    #ifdef LOG_BP_TREE
+    BPTreeHeader(BPTreeLog* log = nullptr) : log(log), data(get_page(tree_header_page_id)) {
+        init();    
+    }
+    BPTreeHeader(const size_t page_size, const size_t branching_factor, BPTreeLog* log = nullptr) : log(log), data(get_page(tree_header_page_id)) {
+        set_page_size(page_size);
+        set_branching_factor(branching_factor);
+        init();    
+    }
+    void set_log(BPTreeLog* set_log) noexcept { log = set_log; }
+    #else
     BPTreeHeader() : data(get_page(tree_header_page_id)) {
         init();    
     }
@@ -77,6 +140,9 @@ class BPTreeHeader {
         set_branching_factor(branching_factor);
         init();    
     }
+    #endif
+
+
     
     [[nodiscard]] auto get_page_size() const noexcept -> unsigned int  { return reinterpret_cast<int*>(data)[0]; }
     void set_page_size(const unsigned int size) noexcept { reinterpret_cast<int*>(data)[0] = size; }
@@ -97,7 +163,7 @@ class BPTreeNodeHeader {
     char* data;
 
     // Read field tuple data
-    BPTreeNodeHeader(char* data) : data(data) {}
+    BPTreeNodeHeader(char* data) noexcept : data(data) {}
 
     [[nodiscard]] static constexpr int get_header_size()  noexcept { return size; }
 
@@ -119,17 +185,17 @@ class BPTreeNodeHeader {
     void set_num_free(const int set) noexcept { reinterpret_cast<unsigned int*>(data)[2] = set; }
 
     // 3
-    [[nodiscard]] auto get_free_start_as_char_ptr() const -> char* { 
-        if (get_type() != LEAF) { FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("Called with non-LEAF"); }
+    [[nodiscard]] auto get_free_start_as_char_ptr() const noexcept -> char* { 
+        if (get_type() != LEAF) { FATAL_ERROR_STACK_TRACE_EXIT_CUR_LOC("Called with non-LEAF"); }
         return reinterpret_cast<char*>(reinterpret_cast<int*>(data) + 3); }
-    [[nodiscard]] auto get_free_start() const -> unsigned int { 
-        if (get_type() != LEAF) { FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("Called with non-LEAF"); }
+    [[nodiscard]] auto get_free_start() const noexcept -> unsigned int { 
+        if (get_type() != LEAF) { FATAL_ERROR_STACK_TRACE_EXIT_CUR_LOC("Called with non-LEAF"); }
         return reinterpret_cast<unsigned int*>(data)[3]; }
     [[nodiscard]] auto get_free_start_noexcept() const noexcept -> unsigned int { return reinterpret_cast<unsigned int*>(data)[3]; } // Careful
     void set_free_start(const int set) noexcept { reinterpret_cast<unsigned int*>(data)[3] = set; }
 
     [[nodiscard]] auto get_c_pid() const noexcept -> page_id_t { 
-        if (get_type() != BRANCH) { FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("Called with non-BRANCH"); }
+        if (get_type() != BRANCH) { FATAL_ERROR_STACK_TRACE_EXIT_CUR_LOC("Called with non-BRANCH"); }
         return reinterpret_cast<page_id_t*>(data)[3]; }
     void set_c_pid(const page_id_t set) noexcept { reinterpret_cast<page_id_t*>(data)[3] = set; }
 
@@ -148,8 +214,8 @@ class BPTreeNodeHeader {
     void set_right_sibling(const page_id_t set) noexcept { reinterpret_cast<page_id_t*>(data)[6] = set; }
 
     // 7
-    [[nodiscard]] auto get_next_overflow() const -> page_id_t { 
-        if (get_type() != LEAF) { FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("Called with non-LEAFs"); }
+    [[nodiscard]] auto get_next_overflow() const noexcept -> page_id_t { 
+        if (get_type() != LEAF) { FATAL_ERROR_STACK_TRACE_EXIT_CUR_LOC("Called with non-LEAFs"); }
         return reinterpret_cast<page_id_t*>(data)[7]; }
     [[nodiscard]] auto get_next_overflow_noexcept() const noexcept -> page_id_t { return reinterpret_cast<page_id_t*>(data)[7]; }
     void set_next_overflow(const page_id_t set) noexcept { reinterpret_cast<page_id_t*>(data)[7] = set; }
@@ -157,28 +223,30 @@ class BPTreeNodeHeader {
 
 
 
-    [[nodiscard]] auto get_int_keys_begin()  const -> int*  { 
-        if (get_type() == LEAF) { FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("get_int_keys_begin(): Called with LEAF type. LEAFs do not contain keys"); }
+    [[nodiscard]] auto get_int_keys_begin()  const noexcept -> int*  { 
+        if (get_type() == LEAF) { FATAL_ERROR_STACK_TRACE_EXIT_CUR_LOC("get_int_keys_begin(): Called with LEAF type. LEAFs do not contain keys"); }
         return reinterpret_cast<int*>(data + size); 
     }
-    [[nodiscard]] auto get_char_keys_begin() const -> char* { 
-        if (get_type() == LEAF) { FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("get_char_keys_begin(): Called with LEAF type. LEAFs do not contain keys"); }
+    [[nodiscard]] auto get_char_keys_begin() const noexcept -> char* { 
+        if (get_type() == LEAF) { FATAL_ERROR_STACK_TRACE_EXIT_CUR_LOC("get_char_keys_begin(): Called with LEAF type. LEAFs do not contain keys"); }
         return data + size; 
     }
-    [[nodiscard]] auto get_records_begin() const -> char* { 
-        if (get_type() != LEAF) { FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("get_records_begin(): Called with non-LEAF type. Non-LEAFs do not contain records"); }
+    [[nodiscard]] auto get_records_begin() const noexcept  -> char* { 
+        if (get_type() != LEAF) { FATAL_ERROR_STACK_TRACE_EXIT_CUR_LOC("get_records_begin(): Called with non-LEAF type. Non-LEAFs do not contain records"); }
         return data + size; 
     }
 };
 
-
-class BPTreeNode {
+class BPTreeNode : PageAllocator {
     public:
 
     page_id_t page_id;
     char* data; 
     BPTreeNodeHeader header;
     const BPTreeHeader& tree_header;
+    #ifdef LOG_BP_TREE
+    void log_add_op(BPTreeLog::Operation op, page_id_t pid) const override { tree_header.log->add_op(op, pid); }
+    #endif
 
     BPTreeNode() = delete;
     BPTreeNode(page_id_t) = delete;
@@ -189,11 +257,10 @@ class BPTreeNode {
         STACK_TRACE_ASSERT(page_id > 0);
     }
 
-
-    static void discount_ass_copy_assignment(BPTreeNode& cur, const page_id_t new_pid) {
-        cur.page_id = new_pid;
-        cur.data = get_page(new_pid);
-        cur.header = BPTreeNodeHeader{cur.data};
+    void discount_ass_copy_assignment(const page_id_t new_pid) {
+        page_id = new_pid;
+        data = get_page(new_pid);
+        header = BPTreeNodeHeader{data};
     }
 
 
@@ -227,8 +294,6 @@ class BPTreeNode {
 
     [[nodiscard]] auto is_full(const int n) const noexcept -> NodeFullStatus;
 
-    [[nodiscard]] auto get_record_from_offset(const int offset) const noexcept -> char*;
-
     void print_leaf(const int indent, std::queue<int>& offsets) const noexcept;
 
     void print_branch(const int indent) const noexcept;
@@ -237,11 +302,7 @@ class BPTreeNode {
 
     void print_inorder(const int indent) const noexcept;
 
-    void sort_keys() noexcept;
-
-    void sort_branch();
-
-    void insert_into_branch(const int key, const page_id_t c_pid, const Record record);
+    void sort_branch() noexcept;
 
     void leaf_deallocate();
 
@@ -257,21 +318,19 @@ class BPTreeNode {
 
     void delete_branch_node();
 
+    // Take from neighbors
     [[nodiscard]] auto branch_merge(std::deque<page_id_t>& path) -> bool;
 
-    // Take from neighbors
-    [[nodiscard]] auto branch_redistribute() -> bool;
+    [[nodiscard]] auto branch_redistribute(std::deque<page_id_t>& path, const int self_index) -> bool;
 
-    void delete_from_branch(std::deque<page_id_t>& path, const int key);
+    void delete_from_branch(const int key);
 
     // Returns address of available freeslot or last available freeblock. True on success, False on fail
-    [[nodiscard]] auto leaf_get_free_slot(const unsigned int record_size) const -> std::pair<char*, bool>;
+    [[nodiscard]] auto leaf_get_free_slot(const unsigned int record_size) const -> std::tuple<char*, page_id_t, bool>;
 
     void write_record(const unsigned int offset, const Record record) noexcept;
     
     [[nodiscard]] auto allocate_overflow() const -> BPTreeNode;
-
-    [[nodiscard]] auto leaf_overflow_insert(char* const last_freeblock_addr, const Record record) -> std::pair<int, page_id_t>;
     
     [[nodiscard]] auto insert_into_leaf(const Record record) -> std::pair<int, page_id_t> ;
     
@@ -283,9 +342,9 @@ class BPTreeNode {
 
     [[nodiscard]] auto get_page_back_char(const int index) const noexcept -> char*;
 
-    void insert_into_intermediate(const int key, const page_id_t left, const page_id_t right);
+    void insert_into_intermediate(const int key, const page_id_t left, const page_id_t right) noexcept;
 
-    void insert_into_intermediate(const int key, const page_id_t other);
+    void insert_into_intermediate(const int key, const page_id_t other) noexcept;
 
     void split_root_intermediate();
 
@@ -294,7 +353,7 @@ class BPTreeNode {
 
     void split_root();
 
-    void delete_from_leaf(const int offset);
+    void delete_from_leaf(const offset_t offset) noexcept;
     
     void split_branch(std::deque<page_id_t>& path);
 
@@ -337,7 +396,7 @@ inline void pretty_print_print_rectangles(const int page_width, const int page_h
 }
 
 inline void pretty_print_create_rectangle(const int page_width, const int page_height, std::vector<std::vector<char>>& screen, std::vector<bptree_pretty_print_color>& page_colors, 
-        const bptree_pretty_print_color color, const int max, const page_id_t pid, const auto& node, std::deque<int>& offsets) noexcept
+        const bptree_pretty_print_color color, const int max, const page_id_t pid, const auto& node, std::deque<int>& offsets)
 {
     page_colors.resize(max + 1);
     page_colors[max] = color;
@@ -425,13 +484,23 @@ inline void pretty_print_create_rectangle(const int page_width, const int page_h
     }
 }
 
-// Todo: Deal with copy/move/ctors/assignments
-class BPTree {
+__attribute__((used))
+inline void print_bytes_with_pid(page_id_t pid, BPTreeNode node) {
+    node.discount_ass_copy_assignment(pid);
+    node.print_bytes();
+}
+
+class BPTree : PageAllocator {
     public:
+    #ifdef LOG_BP_TREE
+    mutable BPTreeLog log{};
+    void log_add_op(BPTreeLog::Operation op, page_id_t pid) const override { log.add_op(op, pid); }
+    #endif
 
     static constexpr page_id_t tree_header_page_id = 0;
     BPTreeHeader header;
     BPTreeNode root;
+
 
     explicit BPTree() : root(ROOT_PAGE_ID, header) {} // Already exists, read from disk
     explicit BPTree(BPTreeHeader set_header) : header(std::move(set_header)), root(ROOT_PAGE_ID, header) {}
@@ -465,6 +534,10 @@ class BPTree {
         tree.root.wipe_clean();
         tree.root.header.set_type(BRANCH);
 
+        #ifdef LOG_BP_TREE
+        tree.header.set_log(&tree.log);
+        #endif
+
         return tree; 
     }
 
@@ -473,11 +546,16 @@ class BPTree {
     // Uses linear search for now
     void insert(const int key, const Record record) {
 
+        
         std::deque<page_id_t> path;
         page_id_t x_id = ROOT_PAGE_ID;
         
         while (true) {
             
+            #ifdef LOG_BP_TREE
+            log.add_op(BPTreeLog::Operation::INSERT, x_id);
+            #endif
+
             BPTreeNode x{x_id, header};
             if (x.is_full() == AT_CAPACITY || x.is_full() == PAST_CAPACITY) {
                 x.split_node(path);
@@ -486,6 +564,7 @@ class BPTree {
                     const page_id_t parent_pid = path.front();
                     assert(parent_pid != 0 && parent_pid < MAX_SLOTS);
                     x_id = parent_pid;
+                    x.discount_ass_copy_assignment(x_id);
                 }
             }
             
@@ -556,7 +635,8 @@ class BPTree {
 
         std::deque<page_id_t> path;
         page_id_t x_id = ROOT_PAGE_ID;
-        
+        int self_index = 0; // For resitributions and merges
+
         while (true) {
             
             BPTreeNode x{x_id, header};
@@ -568,20 +648,26 @@ class BPTree {
             const int n = x.header.get_n();
             const int branching_factor = header.get_branching_factor();
             if (x_id != ROOT_PAGE_ID && n < branching_factor / 2) {
-                bool ok = x.branch_redistribute();
+                bool ok = x.branch_redistribute(path, self_index);
                 if (!ok) {
                     ok = x.branch_merge(path);
                     if (!ok) {
-                        FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("idk");
+                        FATAL_ERROR_STACK_TRACE_EXIT_CUR_LOC("idk");
                     }
                 }
-            }
+
+                // Go back up
+                const page_id_t parent_pid = path.front();
+                assert(parent_pid != 0 && parent_pid < MAX_SLOTS);
+                x_id = parent_pid;
+                x.discount_ass_copy_assignment(x_id);
+            } 
 
             const BPTreeNodeType type = x.header.get_type();
             assert(type != LEAF);
             
             if (type == BRANCH) {
-                x.delete_from_branch(path, key);
+                x.delete_from_branch(key);
                 return;
             } else { // X is an intermediate node, recurse to find leaf node that can contain key and record
                 assert(n >= 1);
@@ -594,6 +680,7 @@ class BPTree {
                     i++;
                 }
 
+                self_index = i;
                 const page_id_t x_child = x.index_page_back(i);
                 STACK_TRACE_ASSERT(x_child != 0);
 
@@ -655,7 +742,7 @@ class BPTree {
         }
     }
 
-    void pretty_print() const noexcept {
+    void pretty_print() const {
         // Clear screen
 
         // Print page 0 metadata

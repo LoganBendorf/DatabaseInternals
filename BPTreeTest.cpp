@@ -33,22 +33,57 @@ void insert_print() {
     }
 }
 
-static constexpr std::string ASCII_BG_YELLOW = "\033[103m";
-static constexpr std::string ASCII_BG_GREEN  = "\033[102m";
+std::unordered_set<page_id_t> get_bptreenode_child_pids(BPTreeNode node) {
+    const int n = node.header.get_n();
+    const auto type = node.header.get_type();
+    STACK_TRACE_ASSERT(type != LEAF);
+    std::unordered_set<page_id_t> ret;
+    if (type == INTERMEDIATE) {
+        for (int i = 0; i < n; i++) {
+            const int pid = node.index_page_back(i);
+            ret.emplace(pid);
+        }
+    }
+    return ret;
+}
 
 void insert_and_validate(auto& tree, RecordValidator& validator, const int key, const Record record) {
-    std::cout << ASCII_BG_YELLOW << "insert(" << key << ", " << record << ")" << ASCII_RESET << std::endl;
+    std::cerr << ASCII_BG_YELLOW << "insert(" << key << ", " << record << ")" << ASCII_RESET << std::endl;
     tree.insert(key, record);
     tree.print_inorder();
     tree.print_bytes();
+    #ifdef LOG_BP_TREE
+    tree.log.print();
+    tree.log.clear();
+
+    // Node was split, all children must have at least 1 sibling
+    auto split_intermediate = tree.log.search(BPTreeLog::SPLIT_INTERMEDIATE);
+    for (const auto& pid : split_intermediate) {
+        auto intermediate_childs = get_bptreenode_child_pids(BPTreeNode{pid, tree.header});
+        for (const auto& c_pid : intermediate_childs) {
+            BPTreeNode child{c_pid, tree.header};
+            STACK_TRACE_ASSERT(child.header.get_left_sibling() != 0 || child.header.get_right_sibling() != 0)
+        }
+    }
+    auto split_branch = tree.log.search(BPTreeLog::SPLIT_BRANCH);
+    for (const auto& pid : split_branch) {
+        auto branch_childs = get_bptreenode_child_pids(BPTreeNode{pid, tree.header});
+        for (const auto& c_pid : branch_childs) {
+            BPTreeNode child{c_pid, tree.header};
+            STACK_TRACE_ASSERT(child.header.get_left_sibling() != 0 || child.header.get_right_sibling() != 0)
+        }
+    }
+    
+    #endif
     if (! validator.validate(key, record)) { 
-        std::cerr << "Bruh. Exiting...\n"; 
+        std::cout << ASCII_BG_RED; tree.print_inorder();
+        std::cerr << ASCII_RESET << "Bruh. Exiting...\n"; 
         exit(1); 
     }
 }
 
 void update_and_validate(auto& tree, RecordValidator& validator, const int key, const Record record) {
-    std::cout << ASCII_BG_YELLOW << "update(" << key << ", " << record << ")" << ASCII_RESET << std::endl;
+    std::cerr << ASCII_BG_YELLOW << "update(" << key << ", " << record << ")" << ASCII_RESET << std::endl;
     tree.update(key, record);
     tree.print_inorder();
     tree.print_bytes();
@@ -63,7 +98,7 @@ void update_and_validate(auto& tree, RecordValidator& validator, const int key, 
 }
 
 void delete_and_validate(auto& tree, RecordValidator& validator, const int key) {
-    std::cout << ASCII_BG_YELLOW << "delete(" << key << ")" << ASCII_RESET << std::endl;
+    std::cerr << ASCII_BG_YELLOW << "delete(" << key << ")" << ASCII_RESET << std::endl;
     tree.delete_key(key);
     validator.remove_key(key);
     tree.print_inorder();
@@ -265,16 +300,55 @@ void test7() {
     std::cout << ASCII_BG_GREEN << "test7(): Pass" << ASCII_RESET << "\n";
 }
 
+void test8() {
+    std::vector<SQL_data_type> fields;
+    fields.emplace_back(VARCHAR);
+    BPTree tree = BPTree::create_tree(G_PAGE_SIZE, 4, fields);
+    RecordValidator validator{tree};
+
+    insert_and_validate(tree, validator, 101, Record{1162167621, 2, "qq"});
+    insert_and_validate(tree, validator, 102, Record{1162167621, 11, "ryqibgxjadz"});
+    insert_and_validate(tree, validator, 103, Record{1162167621, 7, "nyotiwp"});
+    insert_and_validate(tree, validator, 104, Record{1162167621, 2, "tk"});
+    insert_and_validate(tree, validator, 105, Record{1162167621, 12, "vsazvubvoaiv"});
+
+    delete_and_validate(tree, validator, 101);
+    delete_and_validate(tree, validator, 102);
+    std::cout << ASCII_BG_GREEN << "test8(): Pass" << ASCII_RESET << "\n";
+}
+
+void test9() {
+    std::vector<SQL_data_type> fields;
+    fields.emplace_back(VARCHAR);
+    BPTree tree = BPTree::create_tree(G_PAGE_SIZE, 4, fields);
+    RecordValidator validator{tree};
+
+    insert_and_validate(tree, validator, 101, Record{1162167621, 3, "alv"});
+    insert_and_validate(tree, validator, 102, Record{1162167621, 8, "zmrhpxzu"});
+    insert_and_validate(tree, validator, 103, Record{1162167621, 8, "bbokprsa"});
+    delete_and_validate(tree, validator, 102);
+    insert_and_validate(tree, validator, 104, Record{1162167621, 3, "yat"});
+    insert_and_validate(tree, validator, 105, Record{1162167621, 12, "ishgeoytzzbk"});
+    update_and_validate(tree, validator, 104, Record{1162167621, 10, "czhlhodnze"});
+    delete_and_validate(tree, validator, 103);
+    update_and_validate(tree, validator, 105, Record{1162167621, 13, "sreezbwgwojun"});
+    insert_and_validate(tree, validator, 106, Record{1162167621, 6, "sxhdzb"});
+
+    std::cout << ASCII_BG_GREEN << "test9(): Pass" << ASCII_RESET << "\n";
+}
+
 
 void bp_tree_test() {
-    test1();
-    test2();
-    test3();
-    test4();
-    test5();
-    test6();
-    test7();
+    // test1();
+    // test2();
+    // test3();
+    // test4();
+    // test5();
+    // test6();
+    // test7();
+    // test8();
+    test9();
     // return;
     // clear_screen();
-    random_test(); 
+    // random_test(); 
 }

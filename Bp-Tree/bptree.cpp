@@ -14,7 +14,9 @@
 #include <deque>
 #include <map>
 #include <set>
+#include <bit>
 
+#include "Types.h"
 #include "macros.h"
 #include "bptree.h"
 #include "helpers.h"
@@ -28,9 +30,63 @@
 //
 /////////////////////////////
 
-
+static constexpr auto NO_OVERFLOW_PAGE = 0;
 
 static constexpr std::string ASCII_BLACK = "\033[30m";
+
+class StaticPageAllocator {
+    public:
+    char* memslots;
+    unsigned int n;
+    unsigned int page_size;
+    std::set<page_id_t> free_pages;
+    explicit StaticPageAllocator(char* memslots, unsigned int n, unsigned int page_size) : memslots(memslots), n(n), page_size(page_size) {
+        assert(n > 2);
+        for (unsigned int i = 2; i < n; i++) {
+            free_pages.emplace(i);
+        }
+    }
+
+    [[nodiscard]] char* get_page(int index) const {
+        if (index >= n || index < 0) { FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("Page OOB"); }
+        char* const ret_val = memslots + (static_cast<ptrdiff_t>(index * page_size));
+        return ret_val;
+    }
+
+    [[nodiscard]] page_id_t allocate_page() {
+        if (free_pages.empty()) { FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("OOM"); }
+        auto it = free_pages.begin();
+        page_id_t pid = *it;
+        free_pages.erase(it);
+        return pid;
+}
+
+    void deallocate_page(page_id_t pid) {
+        if (!(pid > 1)) {
+            FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("Tried to deallocate page (" + std::to_string(pid) + "). Bruh"); }
+        if (free_pages.contains(pid)) { FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("Double free"); }
+        free_pages.emplace(pid);
+    }
+};
+
+static char memslots[G_PAGE_SIZE * MAX_SLOTS];
+static StaticPageAllocator page_allocator{memslots, MAX_SLOTS, G_PAGE_SIZE};
+
+char* PageAllocator::get_page(int index) const {
+    return page_allocator.get_page(index);
+}
+
+page_id_t PageAllocator::allocate_page() const {
+    const page_id_t pid = page_allocator.allocate_page();
+    #ifdef LOG_BP_TREE
+    log_add_op(BPTreeLog::Operation::ALLOCATE_PAGE, pid);
+    #endif
+    return pid;
+}
+
+void PageAllocator::deallocate_page(page_id_t pid) const {
+    page_allocator.deallocate_page(pid);
+}
 
 void BPTreeNode::print_bytes() const noexcept {
     const auto type       = header.get_type();
@@ -163,8 +219,6 @@ auto BPTreeNode::is_full(const int n) const noexcept -> NodeFullStatus {
     return NOT_FULL;
 }
 
-auto BPTreeNode::get_record_from_offset(const int offset) const noexcept -> char* { return data + offset; }
-
 void BPTreeNode::print_leaf(const int indent, std::queue<int>& offsets) const noexcept {
     assert(header.get_type() == LEAF);
     const int n = header.get_n();
@@ -255,7 +309,6 @@ void BPTreeNode::print_intermediate(const int indent) const noexcept {
         BPTreeNode node{c_pid, tree_header};
         node.print_inorder(indent + 1);
     }
-    // std::cout << std::endl;
 }
 
 void BPTreeNode::print_inorder(const int indent) const noexcept {
@@ -269,21 +322,10 @@ void BPTreeNode::print_inorder(const int indent) const noexcept {
     }
 }
 
-void BPTreeNode::sort_keys() noexcept {
-    const int  n = header.get_n();
-    if (n == 0) { return; }
-    const auto type = header.get_type();
-    if (type == INTERMEDIATE) {
-        FATAL_ERROR_STACK_TRACE_EXIT_CUR_LOC("sort_keys(): TODO: Add sort for INTERMEDIATE nodes");
-    } else {
-        FATAL_ERROR_STACK_TRACE_EXIT_CUR_LOC("sort_keys(): TODO: Add sort for non-INTERMEDIATE nodes");
-    }
-}
-
-void BPTreeNode::sort_branch() {
+void BPTreeNode::sort_branch() noexcept {
     const int n = header.get_n();
     const BPTreeNodeType type = header.get_type();
-    if (type != BRANCH) { FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("insert_into_branch(): Tried to insert record into non-branch"); }
+    if (type != BRANCH) { FATAL_ERROR_STACK_TRACE_EXIT_CUR_LOC("insert_into_branch(): Tried to insert record into non-branch"); }
     
     // Put in vec //
     int* const keys_begin = header.get_int_keys_begin();
@@ -306,45 +348,14 @@ void BPTreeNode::sort_branch() {
 
     // Write back //
     for (int i = 0; i < n; i++) {
-        const auto& tup = vec[i];
+        const auto& [key, pid, off] = vec[i];
         const int index = i * 3;
-        keys_begin[index] = std::get<0>(tup);
-        keys_begin[index + 1] = std::get<1>(tup);
-        keys_begin[index + 2] = std::get<2>(tup);
+        keys_begin[index]     = key;
+        keys_begin[index + 1] = pid;
+        keys_begin[index + 2] = off;
     }
 }
 
-void BPTreeNode::insert_into_branch(const int key, const page_id_t c_pid, const Record record) {
-    const int n = header.get_n();
-    const BPTreeNodeType type = header.get_type();
-
-    if (type != BRANCH)             { FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("insert_into_branch(): Tried to insert record into non-branch"); }
-    if (is_full() == PAST_CAPACITY) { FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("insert_into_branch(): Tried to insert record into node that was past capacity"); }
-    if (is_full() == BYTES_FULL)    { FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("insert_into_branch(): Can't deal with byte overflow yet, so die instead"); }
-    
-    int* const keys_begin             = header.get_int_keys_begin();
-    int* const key_location           = keys_begin + static_cast<ptrdiff_t>(n * 3);
-    int* const pid_location           = key_location + 1;
-    int* const record_offset_location = key_location + 2;
-
-    // Update header
-    header.set_n(n+1);
-
-    // Update Key, child_pid, offset
-    *key_location = key;
-
-    STACK_TRACE_ASSERT(c_pid != 0);
-    
-    // Insert into leaf
-    BPTreeNode child{c_pid, tree_header};
-    STACK_TRACE_ASSERT(child.is_full() == NOT_FULL);
-    STACK_TRACE_ASSERT(child.header.get_type() == LEAF);
-    const auto [record_offset, pid] = child.insert_into_leaf(record);
-    *pid_location = pid;
-    *record_offset_location = record_offset;
-
-    sort_branch();
-}
 
 auto BPTreeNode::allocate_leaf() const -> BPTreeNode {
     const page_id_t pid = allocate_page();
@@ -370,38 +381,33 @@ void BPTreeNode::insert_into_branch(const int key, const Record record) {
     const int n = header.get_n();
     const BPTreeNodeType type = header.get_type();
 
-    if (type != BRANCH)             { FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("insert_into_branch(): Tried to insert record into non-branch"); }
-    if (is_full() == PAST_CAPACITY) { FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("insert_into_branch(): Tried to insert record into node that was past capacity"); }
-    if (is_full() == BYTES_FULL)    { FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("insert_into_branch(): Can't deal with byte overflow yet, so die instead"); }
+    if (type != BRANCH)             { FATAL_ERROR_STACK_TRACE_EXIT_CUR_LOC("insert_into_branch(): Tried to insert record into non-branch"); }
+    if (is_full() == PAST_CAPACITY) { FATAL_ERROR_STACK_TRACE_EXIT_CUR_LOC("insert_into_branch(): Tried to insert record into node that was past capacity"); }
+    if (is_full() == BYTES_FULL)    { FATAL_ERROR_STACK_TRACE_EXIT_CUR_LOC("insert_into_branch(): Can't deal with byte overflow yet, so die instead"); }
     
     int* const keys_begin             = header.get_int_keys_begin();
     int* const key_location           = keys_begin + static_cast<ptrdiff_t>(n * 3);
-    int* const pid_location     = key_location + 1;
+    int* const pid_location           = key_location + 1;
     int* const record_offset_location = key_location + 2;
 
     if (n == 0) {
-        *key_location = key;
         BPTreeNode child = allocate_leaf();
         const auto [record_offset, pid] = child.insert_into_leaf(record);
-        *pid_location = pid;
-        *record_offset_location = record_offset;
         header.set_n(n+1);
         header.set_c_pid(child.page_id);
+        *key_location = key;
+        *pid_location = pid;
+        *record_offset_location = record_offset;
         return;
     }
 
-    // Update header
-    header.set_n(n+1);
-
-    // Update Key, child_pid, offset
-    *key_location = key;
     const int c_pid = header.get_c_pid();
-    
-    // Insert into leaf
     BPTreeNode child{c_pid, tree_header};
     assert(child.is_full() == NOT_FULL);
     assert(child.header.get_type() == LEAF);
     const auto [record_offset, pid] = child.insert_into_leaf(record);
+    header.set_n(n+1);
+    *key_location = key;
     *pid_location = pid;
     *record_offset_location = record_offset;
 
@@ -412,7 +418,7 @@ void BPTreeNode::update_branch(const int key, const Record record) {
     const int n = header.get_n();
     const BPTreeNodeType type = header.get_type();
 
-    if (type != BRANCH) { FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("update_branch(): Tried to update non-branch"); }
+    if (type != BRANCH) { FATAL_ERROR_STACK_TRACE_EXIT_CUR_LOC("update_branch(): Tried to update non-branch"); }
 
     int* const keys_begin = header.get_int_keys_begin();
     
@@ -432,7 +438,7 @@ void BPTreeNode::update_branch(const int key, const Record record) {
         i++;
     }
     STACK_TRACE_ASSERT(c_pid != 0);
-    assert(found == true);
+    if (!found) { throw QueryFailException("Update(): Key not found"); }
 
     // Update leaf //
     BPTreeNode child{c_pid, tree_header};
@@ -483,11 +489,12 @@ void BPTreeNode::delete_branch_node() {
     deallocate_page(page_id);
 }
 
+// Merge self with neighbors
 auto BPTreeNode::branch_merge(std::deque<page_id_t>& path) -> bool {
     const int n = header.get_n();
     const int branching_factor = tree_header.get_branching_factor();
     assert(page_id != 1);
-    if (header.get_type() != BRANCH) { FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("branch_merge(): Tried to merge non-branch"); }
+    if (header.get_type() != BRANCH) { FATAL_ERROR_STACK_TRACE_EXIT_CUR_LOC("branch_merge(): Tried to merge non-BRANCH"); }
 
     
     const page_id_t parent_pid    = path.front();
@@ -533,35 +540,75 @@ auto BPTreeNode::branch_merge(std::deque<page_id_t>& path) -> bool {
 }
 
 // Take from neighbors
-auto BPTreeNode::branch_redistribute() -> bool {
+auto BPTreeNode::branch_redistribute(std::deque<page_id_t>& path, const int self_index) -> bool {
     const int n = header.get_n();
     const int branching_factor = tree_header.get_branching_factor();
     assert(page_id != 1);
-    if (header.get_type() != BRANCH) { FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("branch_redistribute(): Tried to redistribute non-branch"); }
+    if (header.get_type() != BRANCH) { FATAL_ERROR_STACK_TRACE_EXIT_CUR_LOC("branch_redistribute(): Tried to merge non-BRANCH"); }
 
     const page_id_t left_sib  = header.get_left_sibling();
     const page_id_t right_sib = header.get_right_sibling();
+
+    int amount_to_steal = (branching_factor / 2) - n;
 
     static std::vector<page_id_t> sibs(2);
     sibs[0] = left_sib;
     sibs[1] = right_sib;
     for (const page_id_t sib_pid : sibs) {
-        if (sib_pid != 0) {
-            BPTreeNode sib{sib_pid, tree_header};
-            if (sib.header.get_n() <= branching_factor / 2) { continue; }
-            // take key somehow idk
-            FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("TODO");
-            return true;
+        if (sib_pid == 0) { continue; }
+
+        BPTreeNode sib{sib_pid, tree_header};
+        int i = 0;
+        while ( amount_to_steal > 0 && !(sib.header.get_n() <= branching_factor / 2 /*sibling is also low on keys*/) ) {
+
+            // If left, steal from largest. If right, steal from smallest
+            int* keys_begin = nullptr;
+            if (sib_pid == left_sib) {
+                keys_begin = sib.header.get_int_keys_begin() + sib.header.get_n();
+            } else {
+                keys_begin = sib.header.get_int_keys_begin();
+            }
+            const int key = keys_begin[0 + i];
+            const int pid = keys_begin[1 + i];
+            const int off = keys_begin[2 + i];
+
+            BPTreeNode sib_child{pid, tree_header};
+            assert(sib_child.header.get_type() == LEAF);
+            Record record{sib_child.data + off};
+            
+            insert_into_branch(key, record); // Insert first so data isn't deleted
+
+            sib.delete_from_branch(key);
+
+            amount_to_steal--;
+            if (sib_pid == left_sib) {
+                i--;
+            } else { // right_sib
+                i++;
+            }
         }
+
+        // Correct parent
+        // Works with stealing from right sibling, stealing from left sibling is untested
+        assert(path.size() >= 1); // Can only delete from non-root nodes, so this node at the very least would have the root as a parent
+        const page_id_t parent_pid = path.front();
+        BPTreeNode parent{parent_pid, tree_header};
+        assert(parent.header.get_type() == INTERMEDIATE);
+        int* const key_location = parent.header.get_int_keys_begin() + self_index;
+        const int min_key = *sib.header.get_int_keys_begin();
+        *key_location = min_key;
     }
-    return false;
+
+    if (amount_to_steal > 0) { FATAL_ERROR_STACK_TRACE_EXIT_CUR_LOC("!>:(!"); return false; }
+
+    return true;
 }
 
-void BPTreeNode::delete_from_branch(std::deque<page_id_t>& path, const int key) {
+void BPTreeNode::delete_from_branch(const int key) {
     const int n = header.get_n();
     const BPTreeNodeType type = header.get_type();
 
-    if (type != BRANCH) { FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("delete_from_branch(): Tried to delte from non-branch"); }
+    if (type != BRANCH) { FATAL_ERROR_STACK_TRACE_EXIT_CUR_LOC("delete_from_branch(): Tried to delte from non-branch"); }
     assert(n != 0);
 
     int* const keys_begin = header.get_int_keys_begin();
@@ -582,7 +629,7 @@ void BPTreeNode::delete_from_branch(std::deque<page_id_t>& path, const int key) 
         i++;
     }
     STACK_TRACE_ASSERT(c_pid != 0);
-    assert(found == true);
+    if (!found) { throw QueryFailException("Delete(): Key not found"); }
 
     header.set_n(n - 1);
 
@@ -600,29 +647,6 @@ void BPTreeNode::delete_from_branch(std::deque<page_id_t>& path, const int key) 
     assert(child.header.get_type() == LEAF);
     child.delete_from_leaf(offset);
 }
-
-// auto BPTreeNode::leaf_get_free_slot(const unsigned int record_size) const -> std::optional<unsigned short*> {
-//     if (header.get_type() != LEAF)  { FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("leaf_get_free_slot(): Called with non-leaf"); }
-
-//     const unsigned int req_size = record_size; 
-//     const unsigned int num_free = header.get_num_free();
-    
-//     unsigned short* prev_offset = header.get_free_start_as_ushrt_ptr();
-//     FreeBlock freeblock = *reinterpret_cast<FreeBlock*>(data + *prev_offset);
-
-//     bool found = false;
-//     for (int i = 0; i < num_free; i++) {
-//         if (freeblock.size >= req_size) {
-//             return prev_offset; // Overwrite
-//         }
-//         if (freeblock.next_offset == 0) {
-//             FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("Shouldn't happen"); }
-//         prev_offset = reinterpret_cast<unsigned short*>(data + freeblock.next_offset);
-//         freeblock = *reinterpret_cast<FreeBlock*>(data + *prev_offset);
-//     }
-    
-//     return std::nullopt;
-// }
 
 
 
@@ -646,26 +670,37 @@ class FreeListIterator {
     int index;
 
     public:
+    static constexpr int sentinel_end_index = -1;
+    
     using iterator_category = std::forward_iterator_tag;
-    using value_type = std::pair<char*, FreeBlock>; // Return both location and block
+    using value_type = std::tuple<char*, FreeBlock, page_id_t>; 
     using difference_type = std::ptrdiff_t;
     using pointer = const value_type*;
     using reference = value_type;
 
-    explicit FreeListIterator(BPTreeNode node, char* start, int index = 0) 
+    explicit FreeListIterator(BPTreeNode node, int index = 0) 
       : node(node),
-        prev_offset_loc(start), 
+        prev_offset_loc(node.header.get_free_start_as_char_ptr()), 
         previous_offset(charptr_to_ushrt(prev_offset_loc)), 
         freeblock(charptr_to_freeblock(node.data + previous_offset)) ,
         index(index)
     {}
 
     FreeListIterator& operator++() noexcept {
-        const auto page_size = node.tree_header.get_page_size();
-        if (previous_offset >= page_size) { // Overflow page
-            const auto pid = node.header.get_next_overflow();
-            BPTreeNode::discount_ass_copy_assignment(node, pid);
-            previous_offset -= page_size;
+
+        // Either overflow or done
+        if (previous_offset == 0) {
+            const auto overflow_pid = node.header.get_next_overflow();
+            if (overflow_pid == NO_OVERFLOW_PAGE) {
+                index = sentinel_end_index;
+                return *this;
+            }
+            node.discount_ass_copy_assignment(overflow_pid);
+            prev_offset_loc = node.header.get_free_start_as_char_ptr();
+            previous_offset = charptr_to_ushrt(prev_offset_loc);
+            freeblock       = charptr_to_freeblock(node.data + previous_offset);
+            ++index;
+            return *this;
         }
 
         prev_offset_loc = node.data + previous_offset;
@@ -681,9 +716,10 @@ class FreeListIterator {
         return tmp;
     }
 
-    // Return both the location and the freeblock
+    // Return location, freeblock, pid
+    // This the tuple you get inside the for loop
     reference operator*() const noexcept {
-        return {prev_offset_loc, freeblock};
+        return {prev_offset_loc, freeblock, node.page_id};
     }
 
     bool operator==(const FreeListIterator& other) const noexcept {
@@ -702,45 +738,40 @@ class FreeListIterator {
 // Wrapper class for range-based for loop
 class FreeListRange {
     BPTreeNode node;
-    char* start;
     unsigned int count;
 
 public:
-    FreeListRange(BPTreeNode node, char* start, unsigned int count) : node(node), start(start), count(count) {}
+    FreeListRange(BPTreeNode node, unsigned int count) : node(node), count(count) {}
 
-    FreeListIterator begin() const {
-        return FreeListIterator(node, start, 0);
+    [[nodiscard]] FreeListIterator begin() const {
+        return FreeListIterator(node, 0);
     }
 
-    FreeListIterator end() const {
-        return FreeListIterator(node, start, count);
+    [[nodiscard]] FreeListIterator end() const {
+        return FreeListIterator(node, FreeListIterator::sentinel_end_index);
     }
 };
 
 
 
-auto BPTreeNode::leaf_get_free_slot(const unsigned int record_size) const -> std::pair<char*, bool> {
+auto BPTreeNode::leaf_get_free_slot(const unsigned int record_size) const -> std::tuple<char*, page_id_t, bool> {
     if (header.get_type() != LEAF)  { FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("leaf_get_free_slot(): Called with non-leaf"); }
 
     const unsigned int req_size = record_size + RECORD_HEADER_SIZE; 
     const auto page_size = tree_header.get_page_size();
 
-    FreeListRange freelist(*this, header.get_free_start_as_char_ptr(), header.get_num_free());
+    FreeListRange freelist(*this, header.get_num_free());
 
-    for (const auto& p: freelist) {
-        const auto& prev_offset_loc = p.first;
-        const FreeBlock& freeblock = p.second;
+    page_id_t last_pid = page_id;
+    for (const auto& [prev_offset_loc, freeblock, pid]: freelist) {
 
+        last_pid = pid;
         if (freeblock.size >= req_size) {
-            return {prev_offset_loc, true}; 
-        } else if (freeblock.next_offset == 0) {
-            return {prev_offset_loc, false};
-         }
+            return {prev_offset_loc, pid, true}; 
+        }
     }
-
-    FATAL_ERROR_STACK_TRACE_EXIT_CUR_LOC("Probably shouldn't be here idk");
     
-    return {nullptr, false};
+    return {nullptr, last_pid, false};
 };
 
 
@@ -762,21 +793,19 @@ auto BPTreeNode::allocate_overflow() const -> BPTreeNode {
     return leaf;
 }
 
-auto BPTreeNode::leaf_overflow_insert(char* const last_freeblock_addr, const Record record) -> std::pair<int, page_id_t> {
-    // For now I guess never deallocate them, maybe store their n?
+// Returns offset, overflow pid
+static auto leaf_allocate_overflow_and_insert(BPTreeNode node, const Record record) -> std::pair<int, page_id_t> {
 
-    BPTreeNode overflow_node = allocate_overflow();
+    BPTreeNode overflow_node = node.allocate_overflow();
 
-    header.set_next_overflow(overflow_node.page_id);
+    node.header.set_next_overflow(overflow_node.page_id);
 
     // Write record //
     const int offset = overflow_node.header.get_records_begin() - overflow_node.data;
-    const int page_size = tree_header.get_page_size();
+    const int page_size = node.tree_header.get_page_size();
     overflow_node.write_record(offset, record);
 
-    // Write freeblock //
-    char* const prev_offset_loc = last_freeblock_addr;
-    // const unsigned short cur_freeblock_offset = charptr_to_ushrt(prev_offset_loc);
+    // Write overflow freeblock //
     const unsigned short freeblock_offset = offset + record.header.size + RECORD_HEADER_SIZE;
     const unsigned short remaining_size = page_size - freeblock_offset;
     overflow_node.write_freeblock(freeblock_offset, FreeBlock{0, remaining_size});
@@ -787,69 +816,71 @@ auto BPTreeNode::leaf_overflow_insert(char* const last_freeblock_addr, const Rec
     return {offset, overflow_node.page_id};
 }
 
+static auto insert_into_leaf_inner(BPTreeNode node, char* const prev_offset_loc, const Record record) -> std::pair<int, page_id_t> {
+    node.header.set_n(node.header.get_n() + 1);
+
+    const unsigned short  offset      = charptr_to_ushrt(prev_offset_loc);
+    FreeBlock             freeblock   = charptr_to_freeblock(node.data + offset);
+    unsigned short        next_offset = freeblock.next_offset;
+    const unsigned short  prev_size   = freeblock.size;
+
+    node.write_record(offset, record);
+
+    const int total_record_size = record.header.size + RECORD_HEADER_SIZE;
+    const unsigned short remaining_size = prev_size - total_record_size;
+    if (remaining_size < 4) { // Not enough room for freeblock
+        node.header.set_num_fragmented(node.header.get_num_fragmented() + remaining_size);
+        std::memcpy(prev_offset_loc, &next_offset, sizeof(unsigned short)); // *prev_offset = next_offset;
+        assert(node.header.get_num_free() >= 1);
+        node.header.set_num_free(node.header.get_num_free() - 1);
+    } else {
+        const unsigned short free_block_offset = offset + total_record_size;
+        const auto page_size = node.tree_header.get_page_size();
+        // Check if freeblock would be contigous, then combine
+        unsigned short total_size = remaining_size;
+        while (next_offset != 0  && next_offset < page_size /*overflow case*/ && free_block_offset + total_size == next_offset) {
+            FreeBlock next_freeblock = charptr_to_freeblock(node.data + next_offset);
+            total_size += next_freeblock.size;
+            next_offset = next_freeblock.next_offset;
+            node.header.set_num_free(node.header.get_num_free() - 1);
+        }
+        node.write_freeblock(free_block_offset, FreeBlock{next_offset, total_size});
+
+        std::memcpy(prev_offset_loc, &free_block_offset, sizeof(unsigned short)); // *prev_offset = free_block_offset;
+    }
+
+    return {offset, node.page_id};
+}
+
 // Returns offset, pid
 auto BPTreeNode::insert_into_leaf(const Record record) -> std::pair<int, page_id_t> {
     if (header.get_type() != LEAF)  { FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("insert_into_leaf(): Tried to insert record into non-leaf"); }
     if (is_full() == PAST_CAPACITY) { FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("insert_into_leaf(): Tried to insert record into node that was past capacity"); }
 
-    const auto [addr, found_slot] = leaf_get_free_slot(record.header.size);
-    if (!found_slot) {
-        // Couldn't find a free slot, overflow page time //
-        const int overflow_pid = header.get_next_overflow();
-        if (overflow_pid == 0) { // Allocate new overflow and insert
-            return leaf_overflow_insert(addr, record);
-        } else { // Recurse throw overflow pages
-            BPTreeNode child{overflow_pid, tree_header};
-            return child.insert_into_leaf(record);
-        }
-    }
-    
-    header.set_n(header.get_n() + 1);
-
-    char* const prev_offset_loc = addr;
-    const unsigned short  offset      = charptr_to_ushrt(prev_offset_loc);
-    FreeBlock             freeblock   = charptr_to_freeblock(data + offset);
-    unsigned short        next_offset = freeblock.next_offset;
-    const unsigned short  prev_size   = freeblock.size;
-
-    write_record(offset, record);
-
-    const int total_record_size = record.header.size + RECORD_HEADER_SIZE;
-    const unsigned short remaining_size = prev_size - total_record_size;
-    if (remaining_size < 4) { // Not enough room for freeblock
-        header.set_num_fragmented(header.get_num_fragmented() + remaining_size);
-        std::memcpy(prev_offset_loc, &next_offset, sizeof(unsigned short)); // *prev_offset = next_offset;
-    } else {
-        const unsigned short free_block_offset = offset + total_record_size;
-        const auto page_size = tree_header.get_page_size();
-        // Check if freeblock would be contigous, then combine
-        unsigned short total_size = remaining_size;
-        while (next_offset != 0  && next_offset < page_size /*overflow case*/ && free_block_offset + total_size == next_offset) {
-            FreeBlock next_freeblock = charptr_to_freeblock(data + next_offset);
-            total_size += next_freeblock.size;
-            next_offset = next_freeblock.next_offset;
-        }
-        write_freeblock(free_block_offset, FreeBlock{next_offset, total_size});
-
-        std::memcpy(prev_offset_loc, &free_block_offset, sizeof(unsigned short)); // *prev_offset = free_block_offset;
+    // Traverse overflow pages
+    const auto [prev_offset_loc, last_pid, found_slot] = leaf_get_free_slot(record.header.size);
+    if (!found_slot) { // Create new overflow
+        return leaf_allocate_overflow_and_insert(BPTreeNode{last_pid, tree_header}, record);
     }
 
-    return {offset, page_id};
+    return insert_into_leaf_inner(BPTreeNode{last_pid, tree_header}, prev_offset_loc, record);
 }
 
 
 void BPTreeNode::update_leaf(std::deque<page_id_t>& path, const int key, const int offset, const Record record) {
-    if (header.get_type() != LEAF) { FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("update_leaf(): Tried to update non-leaf"); }
+    if (header.get_type() != LEAF) { FATAL_ERROR_STACK_TRACE_EXIT_CUR_LOC("update_leaf(): Tried to update non-leaf"); }
 
     const int n = header.get_n();
 
     Record current_record{data + offset};
 
-    if (current_record.header.size < record.header.size) { // Not enough room
+    // Scuffed rn, technically can delete() can set n to 0, then insert will try to allocate, which can fail, causing bad state
+    // Technically with the WAL, the DB should be able to handle the failure, idk
+    if (current_record.header.size < record.header.size) { 
         assert(path.size() > 0);
         BPTreeNode parent{path.front(), tree_header};
         assert(parent.header.get_type() == BRANCH);
-        parent.delete_from_branch(path, key);
+        parent.delete_from_branch(key);
         parent.insert_into_branch(key, record);
     } else {
         write_record(offset, record);
@@ -857,6 +888,7 @@ void BPTreeNode::update_leaf(std::deque<page_id_t>& path, const int key, const i
 }
 
 auto BPTreeNode::offset_page_back(const int off) const noexcept -> int* {
+    STACK_TRACE_ASSERT(header.get_type() == INTERMEDIATE);
     const int page_size = tree_header.get_page_size();
     const unsigned int offset = sizeof(int) * (off);
     assert(offset < page_size);
@@ -866,6 +898,7 @@ auto BPTreeNode::offset_page_back(const int off) const noexcept -> int* {
 }
 
 auto BPTreeNode::index_page_back(const int index) const noexcept -> int {
+    STACK_TRACE_ASSERT(header.get_type() == INTERMEDIATE);
     const int page_size = tree_header.get_page_size();
     const unsigned int offset = sizeof(int) * (index + 1);
     assert(offset < page_size);
@@ -874,19 +907,11 @@ auto BPTreeNode::index_page_back(const int index) const noexcept -> int {
     return *back;
 }
 
-auto BPTreeNode::get_page_back_char(const int index) const noexcept -> char* {
-    const int page_size = tree_header.get_page_size();
-    const unsigned int offset = index;
-    assert(offset < page_size);
-    char* const char_back = data + page_size - offset;
-    return char_back;
-}
-
-void BPTreeNode::insert_into_intermediate(const int key, const page_id_t left, const page_id_t right) {
+void BPTreeNode::insert_into_intermediate(const int key, const page_id_t left, const page_id_t right) noexcept {
     const int n = header.get_n();
-    if (is_full() == BYTES_FULL)           { FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("insert_into_intermediate(): Called with full bytes");  }
-    if (is_full() == PAST_CAPACITY)        { FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("insert_into_intermediate(): Called when past capacity"); }
-    if (header.get_type() != INTERMEDIATE) { FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("insert_into_intermediate(): Called on non-intermediate node"); }
+    if (is_full() == BYTES_FULL)           { FATAL_ERROR_STACK_TRACE_EXIT_CUR_LOC("insert_into_intermediate(): Called with full bytes");  }
+    if (is_full() == PAST_CAPACITY)        { FATAL_ERROR_STACK_TRACE_EXIT_CUR_LOC("insert_into_intermediate(): Called when past capacity"); }
+    if (header.get_type() != INTERMEDIATE) { FATAL_ERROR_STACK_TRACE_EXIT_CUR_LOC("insert_into_intermediate(): Called on non-intermediate node"); }
 
     int* const int_keys_begin = header.get_int_keys_begin();
     int* const key_location   = int_keys_begin + n;
@@ -902,11 +927,11 @@ void BPTreeNode::insert_into_intermediate(const int key, const page_id_t left, c
     header.set_n(n + 2);
 }
 
-void BPTreeNode::insert_into_intermediate(const int key, const page_id_t other) {
+void BPTreeNode::insert_into_intermediate(const int key, const page_id_t other) noexcept {
     const int n = header.get_n();
-    if (is_full() == BYTES_FULL)           { FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("insert_into_intermediate(): Called with full bytes");  }
-    if (is_full() == PAST_CAPACITY)        { FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("insert_into_intermediate(): Called when past capacity"); }
-    if (header.get_type() != INTERMEDIATE) { FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("insert_into_intermediate(): Called on non-intermediate node"); }
+    if (is_full() == BYTES_FULL)           { FATAL_ERROR_STACK_TRACE_EXIT_CUR_LOC("insert_into_intermediate(): Called with full bytes");  }
+    if (is_full() == PAST_CAPACITY)        { FATAL_ERROR_STACK_TRACE_EXIT_CUR_LOC("insert_into_intermediate(): Called when past capacity"); }
+    if (header.get_type() != INTERMEDIATE) { FATAL_ERROR_STACK_TRACE_EXIT_CUR_LOC("insert_into_intermediate(): Called on non-intermediate node"); }
 
     int* const int_keys_begin = header.get_int_keys_begin();
     assert(n >= 2);
@@ -921,7 +946,7 @@ void BPTreeNode::insert_into_intermediate(const int key, const page_id_t other) 
 
 void BPTreeNode::split_root_intermediate() {
     const auto type = header.get_type();
-    if (type != INTERMEDIATE) { FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("split_root_intermediate(): Called with non-intermediate root"); }
+    if (type != INTERMEDIATE) { FATAL_ERROR_STACK_TRACE_EXIT_CUR_LOC("split_root_intermediate(): Called with non-intermediate root"); }
 
     const int n = header.get_n();
     const unsigned int left_partition  = 0;
@@ -931,15 +956,17 @@ void BPTreeNode::split_root_intermediate() {
 
     // Init left and right nodes //
     const page_id_t left_pid  = allocate_page();
+    const page_id_t right_pid = allocate_page();
     BPTreeNode left_node{left_pid, tree_header};
     left_node.wipe_clean();
     left_node.header.set_n(0);
     left_node.header.set_type(INTERMEDIATE);
-    const page_id_t right_pid = allocate_page();
+    left_node.header.set_right_sibling(right_pid);
     BPTreeNode right_node{right_pid, tree_header};
     right_node.wipe_clean();
     right_node.header.set_n(0);
     right_node.header.set_type(INTERMEDIATE);
+    right_node.header.set_left_sibling(left_pid);
 
     int* const keys_begin  = header.get_int_keys_begin();
 
@@ -975,6 +1002,8 @@ void BPTreeNode::split_root_intermediate() {
     insert_into_intermediate(min_key, left_pid, right_pid);
 
     // Sanity check //
+    assert(header.get_left_sibling()  == 0);
+    assert(header.get_right_sibling() == 0);
     assert(header.get_n() == 2);
     assert(header.get_type() == INTERMEDIATE);
     assert(left_node.header.get_n()  == left_size);
@@ -993,23 +1022,27 @@ auto BPTreeNode::allocate_branch() const -> BPTreeNode {
 }
 
 void BPTreeNode::leaf_deallocate() {
-    if (header.get_type() != LEAF) { FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("leaf_deallocate(): Called with non-LEAF node"); }
+    if (header.get_type() != LEAF) { FATAL_ERROR_STACK_TRACE_EXIT_CUR_LOC("leaf_deallocate(): Called with non-LEAF node"); }
+
     std::vector<page_id_t> pids;
     pids.emplace_back(page_id);
+
     page_id_t overflow_pid = header.get_next_overflow();
     while (overflow_pid != 0) {
+        BPTreeNode cur{overflow_pid, tree_header};
         pids.emplace_back(overflow_pid);
-        overflow_pid = header.get_next_overflow();
+        overflow_pid = cur.header.get_next_overflow();
     }
+
     for (const page_id_t pid : pids) {
         deallocate_page(pid);
     }
 }
 
-// Splist root (branch) into 2 child nodes (branches), creates a new leaf node and fixes the old leaf root previously contained
+// Splits root (branch) into 2 child nodes (branches), creates a new leaf node and fixes the old leaf root previously contained
 // Doesn't work with overflow pages
 void BPTreeNode::split_root_branch() {
-    if (header.get_type() != BRANCH) { FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("split_root_branch(): Called with non-BRANCH root"); }
+    if (header.get_type() != BRANCH) { FATAL_ERROR_STACK_TRACE_EXIT_CUR_LOC("split_root_branch(): Called with non-BRANCH root"); }
     
     const int n = header.get_n();
     const unsigned int left_partition  = 0;
@@ -1023,6 +1056,9 @@ void BPTreeNode::split_root_branch() {
     
     // Insert into left //
     BPTreeNode left_node  = allocate_branch();
+    BPTreeNode right_node = allocate_branch();
+    left_node.header.set_right_sibling(right_node.page_id);
+    right_node.header.set_left_sibling(left_node.page_id);
     for (int i = left_partition; i < right_partition; i++) {
         const int index = i * 3;
         const int key = keys_begin[index];
@@ -1033,7 +1069,6 @@ void BPTreeNode::split_root_branch() {
     }
     
     // Insert into right //
-    BPTreeNode right_node = allocate_branch();
     for (int i = right_partition; i < n; i++) {
         const int index = i * 3;
         const int key = keys_begin[index];
@@ -1053,6 +1088,8 @@ void BPTreeNode::split_root_branch() {
     insert_into_intermediate(min_key, left_node.page_id, right_node.page_id);
 
     // Sanity check //
+    assert(header.get_left_sibling()  == 0);
+    assert(header.get_right_sibling() == 0);
     assert(header.get_n() == 2);
     assert(header.get_type() == INTERMEDIATE);
     assert(left_node.header.get_n()     == left_size);
@@ -1062,44 +1099,52 @@ void BPTreeNode::split_root_branch() {
 }
 
 void BPTreeNode::split_root() {
-    if (page_id != ROOT_PAGE_ID)  { FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("split_root(): Called on non-root node"); }
-    if (is_full() == BYTES_FULL)  { FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("split_root(): Called with full bytes");  }
-    if (!(is_full() == AT_CAPACITY || is_full() == PAST_CAPACITY)) { FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("split_root(): Called when not at or exceeding capacity (under capacity)"); }
+    if (page_id != ROOT_PAGE_ID)  { FATAL_ERROR_STACK_TRACE_EXIT_CUR_LOC("split_root(): Called on non-root node"); }
+    if (is_full() == BYTES_FULL)  { FATAL_ERROR_STACK_TRACE_EXIT_CUR_LOC("split_root(): Called with full bytes");  }
+    if (!(is_full() == AT_CAPACITY || is_full() == PAST_CAPACITY)) { FATAL_ERROR_STACK_TRACE_EXIT_CUR_LOC("split_root(): Called when not at or exceeding capacity (under capacity)"); }
 
     const auto type = header.get_type();
     if (type == INTERMEDIATE) {
+        #ifdef LOG_BP_TREE
+        tree_header.log->add_op(BPTreeLog::Operation::SPLIT_INTERMEDIATE, page_id);
+        #endif
         split_root_intermediate();
     } else if (type == BRANCH) {
+        #ifdef LOG_BP_TREE
+        tree_header.log->add_op(BPTreeLog::Operation::SPLIT_BRANCH, page_id);
+        #endif
         split_root_branch();
     } else if (type == LEAF) {
-        FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("split_root(): Root should never be LEAF");
+        FATAL_ERROR_STACK_TRACE_EXIT_CUR_LOC("split_root(): Root should never be LEAF");
     } else {
         FATAL_ERROR_STACK_TRACE_EXIT_CUR_LOC("TODO");
     }
 }
 
-void BPTreeNode::delete_from_leaf(const int offset) {
+void BPTreeNode::delete_from_leaf(const offset_t offset) noexcept {
     assert(offset <= USHRT_MAX);
     const auto type = header.get_type();
-    if (type != LEAF) { FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("delete_from_leaf(): Called with non-LEAF"); }
+    if (type != LEAF) { FATAL_ERROR_STACK_TRACE_EXIT_CUR_LOC("delete_from_leaf(): Called with non-LEAF"); }
     
     // Zero memory //
     const Record record{data + offset};
     assert(record.header.size <= USHRT_MAX);
     const unsigned short record_size = record.header.size + RECORD_HEADER_SIZE;
     std::memset(data + offset, 0, record_size);
+
     header.set_n(header.get_n() - 1);
 
     // Fix freeblock chain //
-    FreeListRange freelist(*this, header.get_free_start_as_char_ptr(), header.get_num_free());
+    FreeListRange freelist(*this, header.get_num_free());
+
+    const page_id_t cur_pid = page_id;
 
     char* last_offset_loc = nullptr;
-    for (const auto& p : freelist) {
-        const auto& prev_offset_loc = p.first;
-        const auto& freeblock = p.second;
+    for (const auto& [prev_offset_loc, freeblock, pid] : freelist) {
         const unsigned short prev_offset = charptr_to_ushrt(prev_offset_loc);
 
-        // TODO: Overflow case. Next freeblock to point to is in another page
+        // Overflowed, no work to be done
+        if (cur_pid != pid) { return; }
 
         if (prev_offset > offset) { // Insert into middle of chain
 
@@ -1111,9 +1156,11 @@ void BPTreeNode::delete_from_leaf(const int offset) {
                 FreeBlock next_freeblock = charptr_to_freeblock(data + next_offset);
                 total_size += next_freeblock.size;
                 next_offset = next_freeblock.next_offset;
+                header.set_num_free(header.get_num_free() - 1); // TOOD: Keep an eye on num_free, not sure it's totally correct
             }
 
             write_freeblock(offset, FreeBlock{next_offset, total_size});
+            *prev_offset_loc = std::bit_cast<unsigned short>(offset);
             std::memcpy(prev_offset_loc, &offset, sizeof(unsigned short)); // *prev_offset = offset
             header.set_num_free(header.get_num_free() + 1);
             return;
@@ -1126,11 +1173,14 @@ void BPTreeNode::delete_from_leaf(const int offset) {
         last_offset_loc = prev_offset_loc;
     }
 
-    FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("Shouldn't be here, probably failed to deal with overflow");
+    FATAL_ERROR_STACK_TRACE_EXIT_CUR_LOC("Shouldn't be here, probably failed to deal with overflow");
 }
 
 void BPTreeNode::split_branch(std::deque<page_id_t>& path) {
+    if (header.get_type() != BRANCH) { FATAL_ERROR_STACK_TRACE_EXIT_CUR_LOC("split_branch(): Called with non-BRANCH"); }
     BPTreeNode parent_node{path.front(), tree_header};
+    STACK_TRACE_ASSERT(parent_node.header.get_type() == INTERMEDIATE);
+
     const int parent_n = parent_node.header.get_n();
     const int n = header.get_n();
     const unsigned int left_partition  = 0;
@@ -1148,54 +1198,53 @@ void BPTreeNode::split_branch(std::deque<page_id_t>& path) {
     other_node.header.set_type(BRANCH);
 
     // Insert into other //
-    const page_id_t cur_leaf_pid = keys_begin[1]; // [key, pid, offset]
-    BPTreeNode cur_leaf{cur_leaf_pid, tree_header};
-    const page_id_t other_c_pid = allocate_page();
-    BPTreeNode other_child{other_c_pid, tree_header};
-    other_child.wipe_clean();
-    other_child.header.set_type(LEAF);
+    int min_key = INT_MAX;
     for (int i = right_partition; i < n; i++) {
         const int index = i * 3;
-        const int key           = keys_begin[index];
-        const int record_offset = keys_begin[index + 2];
-        other_node.insert_into_branch(key, other_c_pid, Record{cur_leaf.data + record_offset});
+        const int key = keys_begin[index];
+        const int pid = keys_begin[index + 1];
+        const int off = keys_begin[index + 2];
+        BPTreeNode leaf_node{pid, tree_header};
+        assert(leaf_node.header.get_type() == LEAF);
+        min_key = std::min(min_key, key);
+        other_node.insert_into_branch(key, Record{leaf_node.data + off});
     }
 
     // Fix parent //
-    STACK_TRACE_ASSERT(parent_node.header.get_type() == INTERMEDIATE);
-    int* const other_keys_begin = other_node.header.get_int_keys_begin();
-    const int min_key = keys_begin[right_partition * 3];
     parent_node.insert_into_intermediate(min_key, other_pid);
 
-    // Fix LEAF(s?) //
+    // Fix LEAF(s) //
     for (int i = right_partition; i < n; i++) {
         const int index = i * 3;
-        const page_id_t c_pid         = keys_begin[index + 1];
-        const page_id_t record_offset = keys_begin[index + 2];
-        BPTreeNode node{c_pid, tree_header};
+        const int pid = keys_begin[index + 1];
+        const int off = keys_begin[index + 2];
+        BPTreeNode node{pid, tree_header};
         assert(node.header.get_type() == LEAF);
-        node.delete_from_leaf(record_offset);
+        node.delete_from_leaf(off);
     }
 
     // Fix current node //
     std::memset(keys_begin + (static_cast<size_t>(right_partition * 3)), 0,  sizeof(int) * right_size * 3); // [key, pid, offset]
     header.set_n(left_size);
+
+    // Sibling ptrs
+    header.set_right_sibling(other_pid);
+    other_node.header.set_left_sibling(page_id);
     
     // Sanity check //
     assert(parent_node.header.get_n() == parent_n + 1);
     assert(parent_node.header.get_type() == INTERMEDIATE);
     assert(header.get_n() == left_size);
     assert(other_node.header.get_n() == right_size);
-    BPTreeNode other_c{other_c_pid, tree_header};
-    assert(other_c.header.get_n() == right_size);
 }
 
 void BPTreeNode::split_intermediate(std::deque<page_id_t>& path) {
     const auto type = header.get_type();
-    if (type != INTERMEDIATE) { FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("split_intermediate(): Called with non-intermediate node"); }
+    if (type != INTERMEDIATE) { FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("split_intermediate(): Called with non-INTERMEDIATE node"); }
     BPTreeNode parent_node{path.front(), tree_header};
-    const int parent_n = parent_node.header.get_n();
+    STACK_TRACE_ASSERT(parent_node.header.get_type() == INTERMEDIATE);
 
+    const int parent_n = parent_node.header.get_n();
     const int n = header.get_n();
     const unsigned int left_partition  = 0;
     const unsigned int right_partition = n / 2;
@@ -1245,20 +1294,26 @@ void BPTreeNode::split_intermediate(std::deque<page_id_t>& path) {
 void BPTreeNode::split_node(std::deque<page_id_t>& path) {
     if (page_id == ROOT_PAGE_ID) { split_root(); return; }
 
-    if (path.empty()) { FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("split_node(): Path too small");  }
+    if (path.empty()) { FATAL_ERROR_STACK_TRACE_EXIT_CUR_LOC("split_node(): Path too small");  }
     BPTreeNode parent_node{path.front(), tree_header};
-    if (parent_node.is_full() == BYTES_FULL)    { FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("split_node(): Called with parent full bytes");  }
-    if (parent_node.is_full() == PAST_CAPACITY) { FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("split_node(): Called when parent is already past capacity");  }
-    if (parent_node.header.get_type() == LEAF)  { FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("split_node(): Somehow parent is a LEAF node"); }
+    if (parent_node.is_full() == BYTES_FULL)    { FATAL_ERROR_STACK_TRACE_EXIT_CUR_LOC("split_node(): Called with a parent with full bytes");  }
+    if (parent_node.is_full() == PAST_CAPACITY) { FATAL_ERROR_STACK_TRACE_EXIT_CUR_LOC("split_node(): Called with a parent that is already past capacity");  }
+    if (parent_node.header.get_type() == LEAF)  { FATAL_ERROR_STACK_TRACE_EXIT_CUR_LOC("split_node(): Somehow parent is a LEAF node"); }
 
-    if (is_full() == BYTES_FULL)  { FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("split_node(): Called with full bytes");  }
-    if (!(is_full() == AT_CAPACITY || is_full() == PAST_CAPACITY)) { FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("split_node(): Called when not at or exceeding capacity (under capacity)"); }
+    if (is_full() == BYTES_FULL)  { FATAL_ERROR_STACK_TRACE_EXIT_CUR_LOC("split_node(): Called with full bytes");  }
+    if (!(is_full() == AT_CAPACITY || is_full() == PAST_CAPACITY)) { FATAL_ERROR_STACK_TRACE_EXIT_CUR_LOC("split_node(): Called when NOT at or exceeding capacity (UNDER capacity)"); }
 
-    const int  n    = header.get_n();
+    const int  n = header.get_n();
     const auto type = header.get_type();
     if (type == INTERMEDIATE) {
+        #ifdef LOG_BP_TREE
+        tree_header.log->add_op(BPTreeLog::Operation::SPLIT_INTERMEDIATE, page_id);
+        #endif
         split_intermediate(path);
     } else if (type == BRANCH) {
+        #ifdef LOG_BP_TREE
+        tree_header.log->add_op(BPTreeLog::Operation::SPLIT_BRANCH, page_id);
+        #endif
         split_branch(path);
     } else if (type == LEAF) {
         FATAL_ERROR_STACK_TRACE_THROW_CUR_LOC("split_node(): Node being split should never be a LEAF");

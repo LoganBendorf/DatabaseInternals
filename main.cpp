@@ -6,7 +6,7 @@
 
 int main() {    
     // thread_pool_test();
-    disk_test();
+    // disk_test();
     // return 0;
-    // bp_tree_test();
+    bp_tree_test();
 }

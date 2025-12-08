@@ -6,6 +6,9 @@ set(CMAKE_C_COMPILER clang-20)
 
 project(squel LANGUAGES CXX)
 
+# DEBUG
+add_compile_definitions(LOG_BP_TREE)
+
 # Make CMake emit compile_commands.json in the build directory
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
@@ -23,7 +26,7 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 # Compiler flags
-add_compile_options(-g -O1 -Wno-writable-strings)
+add_compile_options(-g -O0 -Wno-writable-strings)
 # add_compile_options(-g -O2 -fsanitize=address,undefined,signed-integer-overflow -Wno-writable-strings)
 
 # Linker option
