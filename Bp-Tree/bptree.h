@@ -18,6 +18,9 @@
 #include <climits>
 #include <set>
 
+#define NOEXCEPT_IF_ALLOC_IS noexcept(noexcept(allocate_page()))
+#define NOEXCEPT_IF_ALLOC_AND_DEALLOC_IS noexcept(noexcept(allocate_page()) && noexcept(deallocate_page(std::declval<page_id_t>())))
+
 // Type + n + num_free + free_start + num_fragmented + left sibling + right sibling + overflow
 static constexpr int bp_tree_node_header_size = sizeof(int) + sizeof(int) + sizeof(int) + sizeof(int) + sizeof(int) + sizeof(page_id_t) + sizeof(page_id_t) + sizeof(page_id_t);
 
@@ -184,15 +187,18 @@ class BPTreeNodeHeader {
         return reinterpret_cast<unsigned int*>(data)[2]; }
     void set_num_free(const int set) noexcept { reinterpret_cast<unsigned int*>(data)[2] = set; }
 
+    
     // 3
+    static constexpr int OFFSET_3_INTS = 3 * sizeof(int);
     [[nodiscard]] auto get_free_start_as_char_ptr() const noexcept -> char* { 
-        if (get_type() != LEAF) { FATAL_ERROR_STACK_TRACE_EXIT_CUR_LOC("Called with non-LEAF"); }
+        STACK_TRACE_ASSERT(get_type() == LEAF);
         return reinterpret_cast<char*>(reinterpret_cast<int*>(data) + 3); }
-    [[nodiscard]] auto get_free_start() const noexcept -> unsigned int { 
-        if (get_type() != LEAF) { FATAL_ERROR_STACK_TRACE_EXIT_CUR_LOC("Called with non-LEAF"); }
-        return reinterpret_cast<unsigned int*>(data)[3]; }
-    [[nodiscard]] auto get_free_start_noexcept() const noexcept -> unsigned int { return reinterpret_cast<unsigned int*>(data)[3]; } // Careful
-    void set_free_start(const int set) noexcept { reinterpret_cast<unsigned int*>(data)[3] = set; }
+    [[nodiscard]] auto get_free_start() const noexcept -> offset_t { 
+        STACK_TRACE_ASSERT(get_type() == LEAF);
+        return *reinterpret_cast<offset_t*>(data + OFFSET_3_INTS); 
+    }
+    [[nodiscard]] auto get_free_start_unsafe() const noexcept -> offset_t { return *reinterpret_cast<offset_t*>(data + OFFSET_3_INTS); }
+    void set_free_start(const offset_t set) noexcept { *reinterpret_cast<offset_t*>( data + OFFSET_3_INTS ) = set; }
 
     [[nodiscard]] auto get_c_pid() const noexcept -> page_id_t { 
         if (get_type() != BRANCH) { FATAL_ERROR_STACK_TRACE_EXIT_CUR_LOC("Called with non-BRANCH"); }
@@ -217,7 +223,7 @@ class BPTreeNodeHeader {
     [[nodiscard]] auto get_next_overflow() const noexcept -> page_id_t { 
         if (get_type() != LEAF) { FATAL_ERROR_STACK_TRACE_EXIT_CUR_LOC("Called with non-LEAFs"); }
         return reinterpret_cast<page_id_t*>(data)[7]; }
-    [[nodiscard]] auto get_next_overflow_noexcept() const noexcept -> page_id_t { return reinterpret_cast<page_id_t*>(data)[7]; }
+    [[nodiscard]] auto get_next_overflow_unsafe() const noexcept -> page_id_t { return reinterpret_cast<page_id_t*>(data)[7]; }
     void set_next_overflow(const page_id_t set) noexcept { reinterpret_cast<page_id_t*>(data)[7] = set; }
 
 
@@ -284,7 +290,7 @@ class BPTreeNode : PageAllocator {
 
     void wipe_clean() noexcept;
 
-    void write_freeblock(int offset, FreeBlock freeblock) noexcept;
+    void write_freeblock(offset_t offset, FreeBlock freeblock) noexcept;
 
     [[nodiscard]] auto get_bytes_used() const noexcept -> int;
 
@@ -328,13 +334,13 @@ class BPTreeNode : PageAllocator {
     // Returns address of available freeslot or last available freeblock. True on success, False on fail
     [[nodiscard]] auto leaf_get_free_slot(const unsigned int record_size) const -> std::tuple<char*, page_id_t, bool>;
 
-    void write_record(const unsigned int offset, const Record record) noexcept;
+    void write_record(const offset_t offset, const Record record) noexcept;
     
     [[nodiscard]] auto allocate_overflow() const -> BPTreeNode;
     
-    [[nodiscard]] auto insert_into_leaf(const Record record) -> std::pair<int, page_id_t> ;
+    [[nodiscard]] auto insert_into_leaf(const Record record) NOEXCEPT_IF_ALLOC_IS -> std::pair<offset_t, page_id_t> ;
     
-    void update_leaf(std::deque<page_id_t>& path, const int key, const int offset, const Record record);
+    void update_leaf(std::deque<page_id_t>& path, const int key, const offset_t offset, const Record record);
 
     [[nodiscard]] auto offset_page_back(const int off) const noexcept -> int*;
 
@@ -355,11 +361,11 @@ class BPTreeNode : PageAllocator {
 
     void delete_from_leaf(const offset_t offset) noexcept;
     
-    void split_branch(std::deque<page_id_t>& path);
+    void split_branch(std::deque<page_id_t>& path) NOEXCEPT_IF_ALLOC_IS;
 
-    void split_intermediate(std::deque<page_id_t>& path);
+    void split_intermediate(std::deque<page_id_t>& path) NOEXCEPT_IF_ALLOC_IS;
 
-    void split_node(std::deque<page_id_t>& path);
+    void split_node(std::deque<page_id_t>& path) NOEXCEPT_IF_ALLOC_IS;
 };
 
 

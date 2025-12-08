@@ -2,6 +2,7 @@
 #pragma once
 
 #include <cstddef>
+#include "Types.h"
 
 enum SQL_data_type : unsigned int { INT, FLOAT, VARCHAR };
 
@@ -53,6 +54,6 @@ struct Record {
 
 constexpr int FREEBLOCK_SIZE = 4;
 struct FreeBlock {
-    unsigned short next_offset;
-    unsigned short size; // (remaining) size includes the 4 bytes of this class. i.e total free space
+    offset_t next_offset{0};
+    unsigned short size{}; // (remaining) size includes the 4 bytes of this class. i.e total free space
 };
